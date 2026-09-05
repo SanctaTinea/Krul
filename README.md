@@ -1,41 +1,53 @@
 # Krul
 
-Krul is the canonical shared protocol repository used by ARK and BKU. It owns
-Surge serialization, transport framing, Krul discovery and dispatch, Starset,
-the protocol specifications, and generic host examples. Board-specific firmware
-and emulators remain in their respective repositories.
+Krul — общий стек командного протокола для встраиваемых устройств и
+настольных инструментов. Он задаёт единый способ сериализовать данные,
+передавать команды, находить доступные команды устройства, проверять их
+параметры и возвращать структурированные результаты.
 
-ARK and BKU select this checkout through the KRUL_ROOT CMake cache path. The
-default workspace layout places ARK, BKU, and Krul in sibling directories.
+Krul нужен, чтобы прошивки, эмуляторы и клиентские приложения не реализовывали
+собственные несовместимые форматы обмена. В одном репозитории находятся:
 
-## Native verification
+- Surge — сериализация данных без динамического выделения памяти;
+- транспортное кадрирование сообщений JSON, BSON и компактного CBOR;
+- описание, обнаружение и диспетчеризация команд Krul;
+- Starset — настольный Python-клиент с интерфейсом, который строится по
+  опубликованным устройством дескрипторам команд;
+- спецификации протокола, тесты и универсальные примеры для компьютера.
 
-With Ninja and a configured C compiler:
+Проекты прошивок могут подключать этот репозиторий через CMake-параметр
+`KRUL_ROOT`. Благодаря этому реализация протокола остаётся общей, а
+специфичные для конкретной платы команды и работа с оборудованием — в
+репозитории соответствующей прошивки.
+
+## Сборка и проверка нативной части
+
+Понадобятся Ninja и настроенный компилятор C:
 
     cmake -S . -B build/Debug -G Ninja -DBUILD_TESTING=ON
     cmake --build build/Debug
     ctest --test-dir build/Debug --output-on-failure
 
-The equivalent repository presets are:
+То же самое можно выполнить с помощью CMake-пресетов репозитория:
 
     cmake --preset PC_Debug
     cmake --build --preset PC_Debug
     ctest --preset PC_Debug
 
-Generate Doxygen documentation with the preset build tree:
+Чтобы сгенерировать документацию Doxygen в каталоге сборки пресета:
 
     cmake --build --preset PC_Debug --target docs
 
 ## Starset
 
-Install the desktop client dependencies and run the canonical entry point:
+Установите зависимости настольного клиента и запустите основную точку входа:
 
     python -m pip install -r "Python GUI/requirements.txt"
     python "Python GUI/Starset.py"
 
-Run its tests with:
+Для запуска тестов Starset:
 
     python -m pip install -r "Python GUI/requirements-dev.txt"
     python -m pytest -q "Python GUI/tests"
 
-Normative protocol documents are under `docs/`.
+Нормативные документы и спецификации протокола находятся в каталоге `docs/`.
