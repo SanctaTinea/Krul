@@ -35,4 +35,6 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install -r "Python GUI/requirements-dev.txt"
       - name: Test Starset
-        run: python -m pytest -q "Python GUI/tests" --basetemp=build/pytest-ci
+        run: |
+            mkdir -p build
+            python -m pytest -q "Python GUI/tests" --basetemp=build/pytest-ci
