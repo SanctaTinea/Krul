@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 
-NUMERIC_TYPES = {"integer", "float", "boolean"}
+NUMERIC_TYPES = {"integer", "float", "boolean", "unsigned"}
 MAX_POINTS_PER_SERIES = 5000
 MIN_BUFFER_SECONDS = 30.0
 MAX_BUFFER_BYTES = 1024 ** 3
