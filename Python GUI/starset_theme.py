@@ -24,6 +24,13 @@ PIN_GRID_VERTICAL_SPACING = 2
 PIN_GRID_HORIZONTAL_SPACING = 15
 PIN_CARD_VERTICAL_MARGIN = 3
 
+# Collapsible header arrow sizing. "size" is a scale factor for the arrow
+# icon only; the header text keeps the normal font size. Group headers use
+# a half-size arrow.
+COLLAPSE_HEADER_SCALE = 1.0
+COLLAPSE_HEADER_GROUP_SCALE = 0.5
+COLLAPSE_HEADER_ARROW = 12
+
 
 # ---------------------------------------------------------------------------
 # Centralized color themes
@@ -362,6 +369,35 @@ def application_stylesheet() -> str:
             color: {c["group_title_text"]};
             font-weight: 600;
             background-color: {c["group_title"]};
+        }}
+
+        QToolButton#commandGroupHeader {{
+            background-color: {c["group_title"]};
+            color: {c["group_title_text"]};
+            border: 0px solid {c["red"]};
+            border-radius: 4px;
+            padding: 4px 8px;
+            letter-spacing: 2px;
+            font-weight: 600;
+            text-align: left;
+        }}
+
+        QToolButton#commandGroupHeader:hover {{
+            background-color: {c["accent"]};
+            color: {c["accent_text"]};
+        }}
+
+        QToolButton#commandTitle {{
+            background: transparent;
+            border: 0px solid {c["red"]};
+            color: {c["white"]};
+            font-weight: 600;
+            padding: 2px 0px;
+            text-align: left;
+        }}
+
+        QToolButton#commandTitle:hover {{
+            color: {c["accent"]};
         }}
         
         QGroupBox {{

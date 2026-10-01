@@ -160,9 +160,66 @@ def test_command_heading_description_and_group_spacing(qtbot) -> None:
     assert first.layout().indexOf(first.description_label) == (
         first.layout().indexOf(first.command_title_label) + 1
     )
-    action_spacer = first.layout().itemAt(first.layout().count() - 2).spacerItem()
+    action_spacer = first.body_layout.itemAt(
+        first.body_layout.count() - 2
+    ).spacerItem()
     assert action_spacer is not None
     assert action_spacer.sizeHint().height() == gui.COMMAND_EXECUTE_TOP_SPACING
+
+    group_header = group.findChild(gui.CollapseHeader, "commandGroupHeader")
+    assert group_header is not None and group_header.is_expanded()
+    assert not first.is_expanded()
+    assert first.body.isHidden()
+
+
+def test_command_and_group_headers_fold_their_content(qtbot) -> None:
+    window = gui.MainWindow()
+    qtbot.addWidget(window)
+    body = gui.QWidget()
+    body_layout = gui.QVBoxLayout(body)
+    descriptors = [{
+        "cmd": "FIRST", "title": "First", "group": "Test",
+        "params": [], "result": [],
+    }]
+    window._populate_command_groups(body_layout, descriptors)
+
+    group = body.findChild(gui.QGroupBox, "commandGroup")
+    group_header = group.findChild(gui.CollapseHeader, "commandGroupHeader")
+    command_grid = group.findChild(gui.ResponsiveCardGrid, "commandCardsGrid")
+    assert group_header is not None and command_grid is not None
+    assert group_header.is_expanded()
+    assert not command_grid.isHidden()
+
+    group_header.set_expanded(False)
+    assert command_grid.isHidden()
+    group_header.set_expanded(True)
+    assert not command_grid.isHidden()
+
+    form = next(form for form in window.forms if form.command == "FIRST")
+    assert form.command_title_label.text() == "First"
+    assert not form.is_expanded()
+    assert form.body.isHidden()
+
+    form.command_title_label.setChecked(True)
+    assert form.is_expanded()
+    assert not form.body.isHidden()
+
+    form.command_title_label.setChecked(False)
+    assert form.body.isHidden()
+
+
+def test_collapse_header_size_scales_only_the_arrow(qtbot) -> None:
+    command = gui.CollapseHeader("Command", "commandTitle")
+    group = gui.CollapseHeader(
+        "Group", "commandGroupHeader",
+        size=gui.COLLAPSE_HEADER_GROUP_SCALE,
+    )
+    qtbot.addWidget(command)
+    qtbot.addWidget(group)
+
+    # Only the arrow shrinks; the label stays at the normal font size.
+    assert group.iconSize().height() < command.iconSize().height()
+    assert group.font().pointSizeF() == command.font().pointSizeF()
 
 
 def test_responsive_card_grid_uses_width_hints_and_reflows(qtbot) -> None:
@@ -1239,6 +1296,7 @@ def test_execute_keeps_scroll_position(qtbot) -> None:
         {"cmd": "FIRST", "title": "First", "params": [], "result": []},
         lambda command, *_args: sender_calls.append(command),
     )
+    first.set_expanded(True)
     layout.addWidget(first)
     for index in range(30):
         layout.addWidget(gui.QLabel(f"Spacer {index}"))
@@ -1266,6 +1324,7 @@ def test_execute_button_shows_pending_color_until_response(qtbot) -> None:
         {"cmd": "WAIT", "title": "Wait", "params": [], "result": []},
         sender,
     )
+    form.set_expanded(True)
     qtbot.addWidget(form)
 
     qtbot.mouseClick(form.execute_button, Qt.LeftButton)

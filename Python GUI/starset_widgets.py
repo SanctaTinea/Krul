@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSlider,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -779,6 +780,59 @@ class ResponsiveCardGrid(QWidget):
             self._content_height = content_height
             self.setFixedHeight(content_height)
             self.updateGeometry()
+
+
+class CollapseHeader(QToolButton):
+    """Clickable header that folds a bound body widget open and closed.
+
+    ``size`` is a scale factor for the arrow icon only; the label keeps the
+    normal font size. The arrow points down while the body is expanded and
+    right while the body is folded.
+    """
+
+    def __init__(self, title: str, object_name: str,
+                 expanded: bool = True,
+                 size: float = COLLAPSE_HEADER_SCALE) -> None:
+        super().__init__()
+        self.setObjectName(object_name)
+        self.setText(title)
+        self.setCheckable(True)
+        self.setChecked(expanded)
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAutoRaise(True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._apply_size(size)
+        self._body: QWidget | None = None
+        self.toggled.connect(self._apply)
+
+    def _apply_size(self, size: float) -> None:
+        scale = max(0.1, float(size))
+        arrow = max(4, round(COLLAPSE_HEADER_ARROW * scale))
+        self.setIconSize(QSize(arrow, arrow))
+
+    def fold(self, body: QWidget) -> None:
+        self._body = body
+        self._apply(self.isChecked())
+
+    def is_expanded(self) -> bool:
+        return self.isChecked()
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.setChecked(expanded)
+
+    def _apply(self, expanded: bool) -> None:
+        self.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        if self._body is None:
+            return
+        self._body.setVisible(expanded)
+        parent = self._body.parentWidget()
+        while parent is not None:
+            if isinstance(parent, ResponsiveCardGrid):
+                parent.request_relayout()
+                return
+            parent = parent.parentWidget()
 
 
 class ResponsivePinGrid(QWidget):
@@ -1788,8 +1842,8 @@ class CommandForm(QGroupBox):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(COMMAND_FORM_SPACING)
-        self.command_title_label = QLabel(title)
-        self.command_title_label.setObjectName("commandTitle")
+        self.command_title_label = CollapseHeader(title, "commandTitle",
+                                                  expanded=False)
         title_font = self.command_title_label.font()
         title_font.setBold(True)
         self.command_title_label.setFont(title_font)
@@ -1800,20 +1854,27 @@ class CommandForm(QGroupBox):
             self.description_label.setObjectName("commandDescription")
             self.description_label.setWordWrap(True)
             layout.addWidget(self.description_label)
-        layout.addSpacing(COMMAND_SECTION_SPACING)
+
+        # Hidden while the command is folded, so the card shows only its name.
+        self.body = QWidget()
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(COMMAND_FORM_SPACING)
+        layout.addWidget(self.body)
+        self.body_layout.addSpacing(COMMAND_SECTION_SPACING)
 
         form = QFormLayout()
         for field in descriptor.get("params", []):
             widget = self._make_param_widget(field)
             self.param_widgets[str(field["name"])] = widget
             form.addRow(str(field.get("label") or field["name"]), widget)
-        layout.addLayout(form)
+        self.body_layout.addLayout(form)
 
         result_fields = descriptor.get("result", [])
         if result_fields:
             line = QFrame()
             line.setFrameShape(QFrame.HLine)
-            layout.addWidget(line)
+            self.body_layout.addWidget(line)
             results = QFormLayout()
             for field in result_fields:
                 if field.get("type") == "console_string":
@@ -1831,9 +1892,9 @@ class CommandForm(QGroupBox):
                     label_widget.setAlignment(Qt.AlignLeft | Qt.AlignTop)
                     result_label = label_widget
                 results.addRow(result_label, output)
-            layout.addLayout(results)
+            self.body_layout.addLayout(results)
 
-        layout.addSpacing(COMMAND_EXECUTE_TOP_SPACING)
+        self.body_layout.addSpacing(COMMAND_EXECUTE_TOP_SPACING)
         row = QHBoxLayout()
         self.execute_button = QPushButton("Выполнить")
         self.execute_button.clicked.connect(self.execute)
@@ -1848,7 +1909,14 @@ class CommandForm(QGroupBox):
         else:
             self.auto_enabled = None
         row.addStretch()
-        layout.addLayout(row)
+        self.body_layout.addLayout(row)
+        self.command_title_label.fold(self.body)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.command_title_label.set_expanded(expanded)
+
+    def is_expanded(self) -> bool:
+        return self.command_title_label.is_expanded()
 
     def set_global_autopoll(self, enabled: bool) -> None:
         self.global_autopoll_enabled = enabled

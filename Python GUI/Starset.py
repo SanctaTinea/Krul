@@ -794,17 +794,23 @@ class MainWindow(QMainWindow):
         ):
             group_name = str(descriptor.get("group") or "Команды")
             if group_name not in groups:
-                box = QGroupBox(group_name)
+                box = QGroupBox()
                 box.setObjectName("commandGroup")
 
                 box_layout = QVBoxLayout(box)
                 box_layout.setSpacing(COMMAND_GROUP_SPACING)
+                group_header = CollapseHeader(
+                    group_name, "commandGroupHeader", expanded=True,
+                    size=COLLAPSE_HEADER_GROUP_SCALE,
+                )
+                box_layout.addWidget(group_header)
                 command_grid = ResponsiveCardGrid(
                     COMMAND_GRID_MIN_CARD_WIDTH,
                     COMMAND_GRID_MAX_COLUMNS,
                 )
                 command_grid.setObjectName("commandCardsGrid")
                 box_layout.addWidget(command_grid)
+                group_header.fold(command_grid)
                 groups[group_name] = (box, command_grid)
                 page_grid.add_card(box)
             command = str(descriptor.get("cmd", ""))
