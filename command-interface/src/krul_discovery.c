@@ -32,6 +32,8 @@ static const char* type_name(krul_type_t type) {
             return "object";
         case KRUL_TYPE_CONSOLE_STRING:
             return "console_string";
+        case KRUL_TYPE_UNION:
+            return "union";
         default:
             return "invalid";
     }
@@ -206,6 +208,31 @@ static bool serialize_field_at(serde_writer_t writer,
         for (uint16_t index = 0U; index < field->schema.object.count; ++index) {
             if (!serialize_field_at(writer, NULL,
                                     &field->schema.object.fields[index]))
+                return false;
+        }
+        if (!serde_end_array(writer)) return false;
+    } else if (field->type == KRUL_TYPE_UNION) {
+        serde_key_t variants = krul_named_key("variants");
+        serde_key_t variant_fields = krul_named_key("fields");
+        serde_key_t variant_tag = krul_named_key("value");
+        if (!serialize_field_at(writer, &tag, field->schema.tagged_union.tag))
+            return false;
+        if (!serde_begin_array(writer, &variants)) return false;
+        for (uint16_t index = 0U;
+             index < field->schema.tagged_union.variant_count; ++index) {
+            const krul_variant_desc_t* variant =
+                &field->schema.tagged_union.variants[index];
+            if (!serde_begin_object(writer, NULL) ||
+                !serde_put_i32(writer, &variant_tag, variant->tag) ||
+                !serde_begin_array(writer, &variant_fields))
+                return false;
+            for (uint16_t field_index = 0U;
+                 field_index < variant->field_count; ++field_index) {
+                if (!serialize_field_at(writer, NULL,
+                                        &variant->fields[field_index]))
+                    return false;
+            }
+            if (!serde_end_array(writer) || !serde_end_object(writer))
                 return false;
         }
         if (!serde_end_array(writer)) return false;

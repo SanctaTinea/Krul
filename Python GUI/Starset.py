@@ -343,11 +343,6 @@ class MainWindow(QMainWindow):
         for panel in self.io_panels:
             for card in panel.cards.values():
                 card.set_state(card.state)
-        for result in self.findChildren(ResultBoolLabel):
-            if result.text() == "SUCCESS":
-                result.setValue(True)
-            elif result.text() == "FAIL":
-                result.setValue(False)
         if self.graph_window is not None:
             self.graph_window.update()
         self.update()
@@ -514,8 +509,9 @@ class MainWindow(QMainWindow):
         try:
             message = json.loads(line)
         except json.JSONDecodeError:
-            if not self.developer_check.isChecked():
-                self._append_terminal(f"Некорректный JSON от МК: {line}", "warning")
+            # Malformed payloads are surfaced as warnings in every mode so
+            # developer mode never hides a protocol formatting problem.
+            self._append_terminal(f"Некорректный JSON от МК: {line}", "warning")
             return
         if not isinstance(message, dict):
             self._append_terminal("Корневое значение ответа не является object", "warning")
@@ -931,12 +927,7 @@ class MainWindow(QMainWindow):
 
         for key, widgets in self._adc_profile_widgets.items():
             for widget in widgets:
-                for control in (
-                    widget.reference_voltage,
-                    widget.scale_factor,
-                    widget.base_voltage,
-                    widget.resolution_bits,
-                ):
+                for control in widget.profile_controls().values():
                     control.valueChanged.connect(
                         lambda _value, profile_key=key, source=widget:
                         self._adc_profile_changed(profile_key, source)

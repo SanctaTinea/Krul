@@ -65,6 +65,32 @@ def test_developer_mode_shows_session_traffic_and_connection_time(qtbot) -> None
     assert "отключено" in window.developer_stats_label.text()
 
 
+def test_malformed_messages_are_warnings_in_developer_mode(qtbot) -> None:
+    window = gui.MainWindow()
+    qtbot.addWidget(window)
+
+    window.developer_check.setChecked(True)
+    window._receive_line("not valid json")
+    text = window.terminal.toPlainText()
+    assert "RX < not valid json" in text
+    assert "Некорректный JSON от МК: not valid json" in text
+
+    window._receive_line("[1, 2, 3]")
+    assert "Корневое значение ответа не является object" in \
+        window.terminal.toPlainText()
+
+
+def test_malformed_messages_are_warnings_without_developer_mode(qtbot) -> None:
+    window = gui.MainWindow()
+    qtbot.addWidget(window)
+
+    assert not window.developer_check.isChecked()
+    window._receive_line("not valid json")
+    text = window.terminal.toPlainText()
+    assert "Некорректный JSON от МК: not valid json" in text
+    assert "RX < not valid json" not in text
+
+
 def test_developer_mode_can_force_nogui_commands_visible(qtbot) -> None:
     window = gui.MainWindow()
     qtbot.addWidget(window)

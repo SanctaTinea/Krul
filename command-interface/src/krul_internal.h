@@ -16,6 +16,8 @@ typedef struct {
     uint16_t field_count;
     const krul_field_desc_t* element;
     const krul_field_desc_t* container_desc;
+    /* Для контейнера KRUL_TYPE_UNION: выбран ли уже вариант тегом. */
+    bool union_tagged;
     /* Бит на каждое поле объекта: обнаруживает дубликаты и пропуски. */
     uint64_t seen;
     size_t item_count;

@@ -157,7 +157,7 @@ class PinCard(QFrame):
     set_requested = Signal(object, int)
 
     def __init__(self, name: str, pin_type: str, state: int,
-                 wire_value: Any | None = None):
+                 wire_value: Any | None = None, read_only: bool = False):
         super().__init__()
         self.name = name
         self.wire_value = name if wire_value is None else wire_value
@@ -184,7 +184,7 @@ class PinCard(QFrame):
         layout.addWidget(label, 1)
 
         self.switch: PinSwitch | None = None
-        if pin_type == "OUT":
+        if pin_type == "OUT" and not read_only:
             self.switch = PinSwitch(state)
             self.switch.state_requested.connect(
                 lambda requested: self.set_requested.emit(
@@ -325,7 +325,7 @@ class ResultWidget(QWidget):
 
 
 class SpecialAdcResultWidget(ResultWidget):
-    """Raw integer ADC value with client-side scaling controls."""
+    """Raw integer ADC value with a client-side correction coefficient."""
 
     @classmethod
     def validate_descriptor(cls, field: dict[str, Any]) -> None:
@@ -348,52 +348,17 @@ class SpecialAdcResultWidget(ResultWidget):
         self.raw_output.setToolTip("RAW значение АЦП")
         layout.addWidget(self.raw_output)
 
-        layout.addWidget(QLabel("Vоп:"))
-        self.reference_voltage = QDoubleSpinBox()
-        self.reference_voltage.setObjectName("adcReferenceVoltage")
-        self.reference_voltage.setDecimals(6)
-        self.reference_voltage.setRange(0.0, 1e9)
-        self.reference_voltage.setSingleStep(0.1)
-        self.reference_voltage.setValue(3.3)
-        self.reference_voltage.setToolTip("Опорное напряжение")
-        self.reference_voltage.setFixedWidth(90)
-        self.reference_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        layout.addWidget(self.reference_voltage)
-
         layout.addWidget(QLabel("Коэф.:"))
-        self.scale_factor = QDoubleSpinBox()
-        self.scale_factor.setObjectName("adcScaleFactor")
-        self.scale_factor.setDecimals(6)
-        self.scale_factor.setRange(-1e9, 1e9)
-        self.scale_factor.setSingleStep(0.1)
-        self.scale_factor.setValue(1.0)
-        self.scale_factor.setToolTip("Дополнительный коэффициент")
-        self.scale_factor.setFixedWidth(90)
-        self.scale_factor.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        layout.addWidget(self.scale_factor)
-
-        layout.addWidget(QLabel("Vбаз:"))
-        self.base_voltage = QDoubleSpinBox()
-        self.base_voltage.setObjectName("adcBaseVoltage")
-        self.base_voltage.setDecimals(6)
-        self.base_voltage.setRange(-1e9, 1e9)
-        self.base_voltage.setSingleStep(0.1)
-        self.base_voltage.setValue(0.0)
-        self.base_voltage.setToolTip("Напряжение, добавляемое к результату")
-        self.base_voltage.setFixedWidth(90)
-        self.base_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        layout.addWidget(self.base_voltage)
-
-        layout.addWidget(QLabel("Бит:"))
-        self.resolution_bits = QSpinBox()
-        self.resolution_bits.setObjectName("adcResolutionBits")
-        self.resolution_bits.setRange(1, 32)
-        self.resolution_bits.setValue(12)
-        self.resolution_bits.setToolTip("Разрядность АЦП")
-        self.resolution_bits.setFixedWidth(30)
-        self.resolution_bits.setButtonSymbols(QDoubleSpinBox.NoButtons)
-
-        layout.addWidget(self.resolution_bits)
+        self.correction_coefficient = QDoubleSpinBox()
+        self.correction_coefficient.setObjectName("adcCorrectionCoefficient")
+        self.correction_coefficient.setDecimals(6)
+        self.correction_coefficient.setRange(-1e9, 1e9)
+        self.correction_coefficient.setSingleStep(0.1)
+        self.correction_coefficient.setValue(1.0)
+        self.correction_coefficient.setToolTip("Поправочный коэффициент АЦП")
+        self.correction_coefficient.setFixedWidth(120)
+        self.correction_coefficient.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        layout.addWidget(self.correction_coefficient)
 
         layout.addWidget(QLabel("="))
         self.scaled_output = QLabel("—")
@@ -404,16 +369,13 @@ class SpecialAdcResultWidget(ResultWidget):
         self.scaled_output.setStyleSheet(
             "QLabel { padding: 3px 8px; font-weight: 600; }"
         )
-        self.scaled_output.setToolTip(
-            "RAW × Vоп × коэффициент / (2^разрядность − 1) + Vбаз"
-        )
+        self.scaled_output.setToolTip("RAW × коэффициент")
         layout.addWidget(self.scaled_output)
         layout.addStretch()
 
-        self.reference_voltage.valueChanged.connect(self._update_scaled_value)
-        self.scale_factor.valueChanged.connect(self._update_scaled_value)
-        self.base_voltage.valueChanged.connect(self._update_scaled_value)
-        self.resolution_bits.valueChanged.connect(self._update_scaled_value)
+        self.correction_coefficient.valueChanged.connect(
+            self._update_scaled_value
+        )
 
     def setValue(self, value: Any) -> None:
         try:
@@ -426,21 +388,14 @@ class SpecialAdcResultWidget(ResultWidget):
         )
         self._update_scaled_value()
 
-    def profile_configuration(self) -> dict[str, float | int]:
-        return {
-            "reference_voltage": self.reference_voltage.value(),
-            "scale_factor": self.scale_factor.value(),
-            "base_voltage": self.base_voltage.value(),
-            "resolution_bits": self.resolution_bits.value(),
-        }
+    def profile_controls(self) -> dict[str, QDoubleSpinBox]:
+        return {"correction_coefficient": self.correction_coefficient}
+
+    def profile_configuration(self) -> dict[str, float]:
+        return {"correction_coefficient": self.correction_coefficient.value()}
 
     def apply_profile_configuration(self, config: dict[str, Any]) -> None:
-        controls = {
-            "reference_voltage": self.reference_voltage,
-            "scale_factor": self.scale_factor,
-            "base_voltage": self.base_voltage,
-            "resolution_bits": self.resolution_bits,
-        }
+        controls = self.profile_controls()
         for name, control in controls.items():
             if name not in config:
                 continue
@@ -458,19 +413,12 @@ class SpecialAdcResultWidget(ResultWidget):
             self.scaled_output.setText("—")
             return
 
-        full_scale = (1 << self.resolution_bits.value()) - 1
-        scaled = (
-            self._raw_value
-            * self.reference_voltage.value()
-            * self.scale_factor.value()
-            / full_scale
-            + self.base_voltage.value()
-        )
+        scaled = self._raw_value * self.correction_coefficient.value()
         self.scaled_output.setText(f"{scaled:.9g}")
 
 
 class SpecialAdcGroupResultWidget(ResultWidget):
-    """ADC object whose integer fields share one scaling configuration."""
+    """ADC object whose integer fields share one correction coefficient."""
 
     bold_label = True
 
@@ -510,53 +458,19 @@ class SpecialAdcGroupResultWidget(ResultWidget):
         layout.setSpacing(6)
 
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Vоп:"))
-        self.reference_voltage = QDoubleSpinBox()
-        self.reference_voltage.setObjectName("adcGroupReferenceVoltage")
-        self.reference_voltage.setDecimals(6)
-        self.reference_voltage.setRange(0.0, 1e9)
-        self.reference_voltage.setSingleStep(0.1)
-        self.reference_voltage.setValue(3.3)
-        self.reference_voltage.setToolTip("Опорное напряжение группы")
-        self.reference_voltage.setFixedWidth(90)
-        self.reference_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        controls.addWidget(self.reference_voltage)
-
         controls.addWidget(QLabel("Коэф.:"))
-        self.scale_factor = QDoubleSpinBox()
-        self.scale_factor.setObjectName("adcGroupScaleFactor")
-        self.scale_factor.setDecimals(6)
-        self.scale_factor.setRange(-1e9, 1e9)
-        self.scale_factor.setSingleStep(0.1)
-        self.scale_factor.setValue(1.0)
-        self.scale_factor.setToolTip("Общий дополнительный коэффициент")
-        self.scale_factor.setFixedWidth(90)
-        self.scale_factor.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        controls.addWidget(self.scale_factor)
-
-        controls.addWidget(QLabel("Vбаз:"))
-        self.base_voltage = QDoubleSpinBox()
-        self.base_voltage.setObjectName("adcGroupBaseVoltage")
-        self.base_voltage.setDecimals(6)
-        self.base_voltage.setRange(-1e9, 1e9)
-        self.base_voltage.setSingleStep(0.1)
-        self.base_voltage.setValue(0.0)
-        self.base_voltage.setToolTip(
-            "Напряжение, добавляемое к результатам группы"
+        self.correction_coefficient = QDoubleSpinBox()
+        self.correction_coefficient.setObjectName("adcGroupCorrectionCoefficient")
+        self.correction_coefficient.setDecimals(6)
+        self.correction_coefficient.setRange(-1e9, 1e9)
+        self.correction_coefficient.setSingleStep(0.1)
+        self.correction_coefficient.setValue(1.0)
+        self.correction_coefficient.setToolTip(
+            "Единый поправочный коэффициент группы"
         )
-        self.base_voltage.setFixedWidth(90)
-        self.base_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        controls.addWidget(self.base_voltage)
-
-        controls.addWidget(QLabel("Бит:"))
-        self.resolution_bits = QSpinBox()
-        self.resolution_bits.setObjectName("adcGroupResolutionBits")
-        self.resolution_bits.setRange(1, 32)
-        self.resolution_bits.setValue(12)
-        self.resolution_bits.setToolTip("Общая разрядность АЦП")
-        self.resolution_bits.setFixedWidth(30)
-        self.resolution_bits.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        controls.addWidget(self.resolution_bits)
+        self.correction_coefficient.setFixedWidth(120)
+        self.correction_coefficient.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        controls.addWidget(self.correction_coefficient)
         controls.addStretch()
         layout.addLayout(controls)
 
@@ -583,9 +497,7 @@ class SpecialAdcGroupResultWidget(ResultWidget):
             scaled_output.setStyleSheet(
                 "QLabel { padding: 3px 8px; font-weight: 600; }"
             )
-            scaled_output.setToolTip(
-                "RAW × Vоп × коэффициент / (2^разрядность − 1) + Vбаз"
-            )
+            scaled_output.setToolTip("RAW × коэффициент")
 
             self._raw_values[name] = None
             self.raw_outputs[name] = raw_output
@@ -598,10 +510,9 @@ class SpecialAdcGroupResultWidget(ResultWidget):
         values.setColumnStretch(3, 1)
         layout.addLayout(values)
 
-        self.reference_voltage.valueChanged.connect(self._update_scaled_values)
-        self.scale_factor.valueChanged.connect(self._update_scaled_values)
-        self.base_voltage.valueChanged.connect(self._update_scaled_values)
-        self.resolution_bits.valueChanged.connect(self._update_scaled_values)
+        self.correction_coefficient.valueChanged.connect(
+            self._update_scaled_values
+        )
 
     def setValue(self, value: Any) -> None:
         result = value if isinstance(value, dict) else {}
@@ -615,22 +526,14 @@ class SpecialAdcGroupResultWidget(ResultWidget):
             raw_output.setText("—" if parsed_value is None else str(parsed_value))
         self._update_scaled_values()
 
-    def profile_configuration(self) -> dict[str, float | int]:
-        return {
-            "reference_voltage": self.reference_voltage.value(),
-            "scale_factor": self.scale_factor.value(),
-            "base_voltage": self.base_voltage.value(),
-            "resolution_bits": self.resolution_bits.value(),
-        }
+    def profile_controls(self) -> dict[str, QDoubleSpinBox]:
+        return {"correction_coefficient": self.correction_coefficient}
+
+    def profile_configuration(self) -> dict[str, float]:
+        return {"correction_coefficient": self.correction_coefficient.value()}
 
     def apply_profile_configuration(self, config: dict[str, Any]) -> None:
-        controls = {
-            "reference_voltage": self.reference_voltage,
-            "scale_factor": self.scale_factor,
-            "base_voltage": self.base_voltage,
-            "resolution_bits": self.resolution_bits,
-        }
-        for name, control in controls.items():
+        for name, control in self.profile_controls().items():
             if name not in config:
                 continue
             blocked = control.blockSignals(True)
@@ -643,18 +546,13 @@ class SpecialAdcGroupResultWidget(ResultWidget):
         self._update_scaled_values()
 
     def _update_scaled_values(self) -> None:
-        full_scale = (1 << self.resolution_bits.value()) - 1
-        multiplier = (
-            self.reference_voltage.value() * self.scale_factor.value()
-        )
+        coefficient = self.correction_coefficient.value()
         for name, scaled_output in self.scaled_outputs.items():
             raw_value = self._raw_values[name]
             if raw_value is None:
                 scaled_output.setText("—")
                 continue
-            scaled_output.setText(
-                f"{raw_value * multiplier / full_scale + self.base_voltage.value():.9g}"
-            )
+            scaled_output.setText(f"{raw_value * coefficient:.9g}")
 
 
 PARAM_WIDGETS: dict[str, type[ParameterWidget]] = {
@@ -667,38 +565,24 @@ RESULT_WIDGETS: dict[str, type[ResultWidget]] = {
 }
 
 
-class ResultBoolLabel(QLabel):
+class ResultBoolLabel(QCheckBox):
+    """Read-only boolean result rendered as a checkbox."""
+
     def __init__(self):
-        super().__init__("—")
+        super().__init__()
+        self.setChecked(False)
+        self.setTristate(True)
+        self.setCheckState(Qt.PartiallyChecked)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
-        self.setAlignment(Qt.AlignCenter)
-        self.setMinimumWidth(55)
-
-    def setValue(self, value: bool):
-        if value:
-            self.setText("SUCCESS")
-            self.setStyleSheet(f"""
-                QLabel {{
-                    margin-right: 10px;
-                    padding: 3px 8px;
-                    border-radius: 5px;
-                    background: {theme_color("success_soft")};
-                    color: {theme_color("success_text")};
-                    font-weight: 600;
-                }}
-            """)
-        else:
-            self.setText("FAIL")
-            self.setStyleSheet(f"""
-                QLabel {{
-                    margin-right: 10px;
-                    padding: 3px 8px;
-                    border-radius: 5px;
-                    background: {theme_color("danger_soft")};
-                    color: {theme_color("danger_text")};
-                    font-weight: 600;
-                }}
-            """)
+    def setValue(self, value: Any) -> None:
+        if value is None or value == "":
+            self.setCheckState(Qt.PartiallyChecked)
+            return
+        self.setCheckState(
+            Qt.Checked if value else Qt.Unchecked
+        )
 
 
 class ResultEnumLabel(QLabel):
@@ -944,7 +828,7 @@ class IOPanel(QWidget):
     def __init__(self, pins: list[dict[str, Any]], sender: Callable,
                  target: Any | None = None,
                  get_command: str = "PIN_GET",
-                 set_command: str = "PIN_SET",
+                 set_command: str | None = "PIN_SET",
                  all_value: Any = "ALL",
                  update_observer: Callable | None = None,
                  use_internal_scroll: bool = True,
@@ -957,6 +841,7 @@ class IOPanel(QWidget):
         )
         self.get_command = get_command
         self.set_command = set_command
+        self.read_only = set_command is None
         self.all_value = all_value
         self.update_observer = update_observer
         self.cards: dict[str, PinCard] = {}
@@ -1027,8 +912,9 @@ class IOPanel(QWidget):
             lambda _checked=False: self.poll_outputs(self.read_outputs_button)
         )
         all_row.addWidget(self.read_outputs_button)
-        all_row.addWidget(self.activate_all_button)
-        all_row.addWidget(self.deactivate_all_button)
+        if not self.read_only:
+            all_row.addWidget(self.activate_all_button)
+            all_row.addWidget(self.deactivate_all_button)
         body_layout.addStretch()
         if use_internal_scroll:
             scroll = QScrollArea()
@@ -1049,7 +935,10 @@ class IOPanel(QWidget):
             if not name or pin_type not in {"IN", "OUT"}:
                 continue
             wire_name = pin.get("_wire_name", pin.get("name"))
-            card = PinCard(name, pin_type, int(pin.get("state", 0)), wire_name)
+            card = PinCard(
+                name, pin_type, int(pin.get("state", 0)), wire_name,
+                read_only=self.read_only,
+            )
             card.set_requested.connect(self._set_one)
             self.cards[name] = card
             self._cards_by_wire[wire_name] = card
@@ -1274,7 +1163,7 @@ class SpecialGpioCommandWidget(CommandWidget):
     @classmethod
     def _split_descriptors(
             cls, descriptors: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         set_commands = [
             descriptor for descriptor in descriptors
             if any(
@@ -1286,12 +1175,12 @@ class SpecialGpioCommandWidget(CommandWidget):
             descriptor for descriptor in descriptors
             if descriptor not in set_commands
         ]
-        if not get_commands or len(set_commands) != 1:
+        if not get_commands or len(set_commands) > 1:
             raise WidgetCompatibilityError(
-                "special_gpio ожидает хотя бы одну команду чтения и ровно "
-                "одну команду записи; роли определяются по параметру state"
+                "special_gpio ожидает хотя бы одну команду чтения и не более "
+                "одной команды записи; роли определяются по параметру state"
             )
-        return get_commands, set_commands[0]
+        return get_commands, (set_commands[0] if set_commands else None)
 
     @classmethod
     def validate_descriptors(
@@ -1315,15 +1204,17 @@ class SpecialGpioCommandWidget(CommandWidget):
         self.get_descriptors, self.set_descriptor = self._split_descriptors(
             descriptors
         )
-        self.set_command = str(self.set_descriptor["cmd"])
+        self.set_command = (
+            str(self.set_descriptor["cmd"]) if self.set_descriptor else None
+        )
         self.panels: list[IOPanel] = []
         self.hosts: dict[str, list[QVBoxLayout]] = defaultdict(list)
         self._poll_slot: int | None = None
 
     def hidden_command_names(self) -> set[str]:
         # Read commands keep their normal tab/group/order placement.  The write
-        # command is an implementation detail of their special GPIO control.
-        return {self.set_command}
+        # command, when present, is an implementation detail of the GPIO control.
+        return {self.set_command} if self.set_command else set()
 
     def create_widget(self, descriptor: dict[str, Any]) -> QWidget | None:
         command = str(descriptor.get("cmd", ""))
@@ -1447,9 +1338,11 @@ class SpecialGpioCommandWidget(CommandWidget):
         return decoded
 
     def _all_pin_value(self) -> Any:
+        if self.set_descriptor is None:
+            return None
         values = self._enum_titles(
             self.set_descriptor.get("params", []), "name")
-        return next(iter(values), "ALL")
+        return next(iter(values), None)
 
     def _pins_received(self, descriptor: dict[str, Any],
                        message: dict[str, Any]) -> None:
@@ -1714,6 +1607,167 @@ COMMAND_WIDGETS: dict[str, type[CommandWidget]] = {
     "special_pwm": SpecialPwmCommandWidget,
 }
 
+# Результаты этих типов рисуются схемой, без widget_hint.
+_STRUCTURED_RESULT_TYPES = ("object", "array", "union")
+
+
+def _clear_result_layout(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+            continue
+        child = item.layout()
+        if child is not None:
+            _clear_result_layout(child)
+
+
+def _result_text(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, bool):
+        return "да" if value else "нет"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _result_scalar_widget(field: dict[str, Any], value: Any) -> QWidget:
+    kind = field.get("type") if isinstance(field, dict) else None
+    if kind == "enum":
+        widget = ResultEnumLabel(field)
+        widget.setValue(value)
+        return widget
+    if kind == "boolean":
+        widget = ResultBoolLabel()
+        widget.setValue(value)
+        return widget
+    if kind in ("integer", "unsigned", "float"):
+        widget = ResultIntLabel(compact=True)
+        widget.setText(_result_text(value))
+        return widget
+    widget = QLabel(_result_text(value))
+    widget.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    widget.setWordWrap(True)
+    return widget
+
+
+def _result_row_box() -> tuple[QWidget, QGridLayout]:
+    box = QWidget()
+    grid = QGridLayout(box)
+    grid.setContentsMargins(0, 0, 0, 0)
+    grid.setHorizontalSpacing(8)
+    grid.setVerticalSpacing(2)
+    return box, grid
+
+
+def _result_child_value(value: Any, child: dict[str, Any]) -> Any:
+    if isinstance(value, dict):
+        return value.get(str(child.get("name") or ""))
+    return None
+
+
+def _result_field_label(field: dict[str, Any]) -> str:
+    return str(field.get("label") or field.get("name") or "")
+
+
+def _build_result_value(field: dict[str, Any], value: Any,
+                        depth: int = 0) -> QWidget:
+    """Schema-driven widget for objects, arrays and tagged unions."""
+    kind = field.get("type") if isinstance(field, dict) else None
+    if depth > 8:
+        return QLabel("…")
+    if kind == "object":
+        box, grid = _result_row_box()
+        row = 0
+        for child in field.get("fields", []) or []:
+            if not isinstance(child, dict):
+                continue
+            grid.addWidget(QLabel(_result_field_label(child)), row, 0)
+            grid.addWidget(
+                _build_result_value(child, _result_child_value(value, child),
+                                    depth + 1),
+                row, 1,
+            )
+            row += 1
+        return box
+    if kind == "union":
+        box, grid = _result_row_box()
+        tag_field = field.get("tag") if isinstance(field.get("tag"), dict) else {}
+        tag_name = str(tag_field.get("name") or "")
+        tag_value = value.get(tag_name) if isinstance(value, dict) else None
+        grid.addWidget(
+            QLabel(_result_field_label(tag_field) or "Тип"), 0, 0
+        )
+        grid.addWidget(_result_scalar_widget(tag_field, tag_value), 0, 1)
+        variant = None
+        for item in field.get("variants", []) or []:
+            if isinstance(item, dict) and item.get("value") == tag_value:
+                variant = item
+                break
+        row = 1
+        for child in (variant or {}).get("fields", []) or []:
+            if not isinstance(child, dict):
+                continue
+            grid.addWidget(QLabel(_result_field_label(child)), row, 0)
+            grid.addWidget(
+                _build_result_value(child, _result_child_value(value, child),
+                                    depth + 1),
+                row, 1,
+            )
+            row += 1
+        return box
+    if kind == "array":
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(4)
+        element = field.get("items") if isinstance(field.get("items"), dict) else {}
+        element_kind = element.get("type")
+        for index, item in enumerate(value if isinstance(value, list) else []):
+            entry = QWidget()
+            entry_layout = QVBoxLayout(entry)
+            entry_layout.setContentsMargins(0, 0, 0, 0)
+            entry_layout.setSpacing(2)
+            if element_kind in _STRUCTURED_RESULT_TYPES:
+                caption = QLabel(f"#{index + 1}")
+                font = caption.font()
+                font.setBold(True)
+                caption.setFont(font)
+                entry_layout.addWidget(caption)
+                entry_layout.addWidget(
+                    _build_result_value(element, item, depth + 1)
+                )
+            else:
+                row_widget = QWidget()
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.addWidget(QLabel(f"#{index + 1}"))
+                row_layout.addWidget(
+                    _build_result_value(element, item, depth + 1), 1
+                )
+                entry_layout.addWidget(row_widget)
+            column.addWidget(entry)
+        return box
+    return _result_scalar_widget(field if isinstance(field, dict) else {}, value)
+
+
+class ResultStructuredWidget(ResultWidget):
+    """Renders object/array/tagged-union results straight from the schema."""
+
+    def __init__(self, field: dict[str, Any]) -> None:
+        super().__init__(field)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(2)
+        self._layout.addWidget(QLabel("—"))
+
+    def setValue(self, value: Any) -> None:
+        _clear_result_layout(self._layout)
+        self._layout.addWidget(_build_result_value(self.field, value))
+
 
 class CommandForm(QGroupBox):
     def __init__(self, descriptor: dict[str, Any], sender: Callable,
@@ -1898,6 +1952,8 @@ class CommandForm(QGroupBox):
                     return widget_class(field)
                 except WidgetCompatibilityError as exc:
                     self._warn_widget_fallback("RESULT_WIDGETS", hint, str(exc))
+        if field.get("type") in _STRUCTURED_RESULT_TYPES:
+            return ResultStructuredWidget(field)
         return self._make_default_result_widget(field)
 
     @staticmethod

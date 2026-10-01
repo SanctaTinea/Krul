@@ -51,7 +51,12 @@ typedef enum {
     KRUL_TYPE_ARRAY,
     KRUL_TYPE_OBJECT,
     /** Строка результата, которую клиент отображает в консоли с заданной важностью. */
-    KRUL_TYPE_CONSOLE_STRING
+    KRUL_TYPE_CONSOLE_STRING,
+    /**
+     * Тегированное объединение (sum type): поле несёт дискриминатор-enum и
+     * полезную нагрузку ровно одного варианта. Допустимо только в результате.
+     */
+    KRUL_TYPE_UNION
 } krul_type_t;
 
 /** Необязательная подсказка отображения поля или команды в UI; не влияет на runtime-проверку. */
@@ -114,6 +119,13 @@ typedef union {
 
 typedef struct krul_field_desc krul_field_desc_t;
 typedef struct krul_error krul_error_t;
+
+/** Один вариант тегированного объединения: значение тега и его поля. */
+typedef struct {
+    int32_t tag;                      /**< Дискриминатор, выбирающий вариант. */
+    const krul_field_desc_t* fields;  /**< Поля полезной нагрузки варианта. */
+    uint16_t field_count;             /**< Число полей варианта. */
+} krul_variant_desc_t;
 
 /** Значение, передаваемое функции обратного вызова пользовательского ограничения. */
 typedef struct {
@@ -182,6 +194,11 @@ struct krul_field_desc {
         struct {
             krul_console_type_t severity; // хранит уровень severity для console_string, который я думал вырезать
         } console;
+        struct {                         // тегированное объединение
+            const krul_field_desc_t* tag;
+            const krul_variant_desc_t* variants;
+            uint16_t variant_count;
+        } tagged_union;
     } schema;
     // Ограничения хранятся в объединении и имеют смысл только при
     // has_constraints = true.
@@ -956,6 +973,31 @@ bool krul_result_begin_object(krul_result_t* result, const char* name);
  * @return `true`, если объект полон и успешно закрывается.
  */
 bool krul_result_end_object(krul_result_t* result);
+
+/**
+ * @brief Начать объявленное тегированное объединение (результат).
+ * @param result Запись результата.
+ * @param name Объявленное имя поля или NULL для элемента массива.
+ * @return `true`, если поле-объединение найдено и запись открыта.
+ * @note После начала нужно один раз вызвать krul_result_union_tag(), затем
+ * записать поля выбранного варианта и вызвать krul_result_end_union().
+ */
+bool krul_result_begin_union(krul_result_t* result, const char* name);
+
+/**
+ * @brief Записать дискриминатор объединения и выбрать вариант.
+ * @param result Запись результата, текущий контейнер которой — свежее union.
+ * @param tag Значение тега; должно быть объявлено и иметь вариант.
+ * @return `true`, если тег допустим и записан.
+ */
+bool krul_result_union_tag(krul_result_t* result, int32_t tag);
+
+/**
+ * @brief Завершить тегированное объединение и проверить полноту варианта.
+ * @param result Запись результата, текущий контейнер которой — union.
+ * @return `true`, если вариант полон и успешно закрыт.
+ */
+bool krul_result_end_union(krul_result_t* result);
 
 /**
  * @brief Проверить, остаётся ли построение результата корректным на данный момент.
