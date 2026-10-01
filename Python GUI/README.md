@@ -16,6 +16,18 @@ discovery, stateful GPIO, виртуальный ADC, echo, log events и зад
 Среди входов есть `SQUARE_2S`: он выдаёт прямоугольный сигнал, переключаясь
 между `LOW` и `HIGH` каждую секунду (полный период — 2 секунды).
 
+Симулятор СПУ повторяет таблицу команд прошивки `Apps/app_cm7/src/app_cmd.c`
+(те же `tab`, `group`, `order`, схемы параметров и результата). Запуск:
+
+```powershell
+python spu_simulator.py
+```
+
+Он слушает `socket://127.0.0.1:7001`. `WHOAMI` сообщает устройство `СПУ`,
+команда `READ_TELEMETRY` возвращает массив `nodes` из тегированных объединений
+«телеметрия / событие», а Starset рисует их прямо по схеме `DESCRIBE`, без
+`widget_hint`. Режим stdin/stdout доступен через `python spu_simulator.py --stdio`.
+
 Автоматические headless-тесты используют fake transport и не открывают сокет:
 
 ```powershell

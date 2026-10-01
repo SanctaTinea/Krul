@@ -27,12 +27,14 @@ def cbor_key_tag(name: str) -> int:
 
 
 _CBOR_PROTOCOL_KEYS = (
+    # Keys the firmware emits in DESCRIBE/results. A key missing here decodes
+    # back as its raw numeric tag (e.g. a union's 'variants' key would vanish).
     "id", "cmd", "params", "success", "result", "error", "code",
     "message", "event", "data", "severity", "source", "format",
     "name", "tag", "label", "type", "widget_hint", "constraints",
     "default", "minimum", "maximum", "step", "minLength", "maxLength",
     "values", "value", "title", "minItems", "maxItems", "items",
-    "fields", "builtin", "nogui", "tab", "description", "group",
+    "variants", "fields", "builtin", "nogui", "tab", "description", "group",
     "order", "autoupdate", "timeout_ms", "min_period", "max_period",
     "default_period", "protocol_version", "device_name", "device_id", "firmware",
     "cmd_name",

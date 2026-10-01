@@ -552,10 +552,17 @@ class DispatchResult:
 class KrulSimulator:
     """Thread-safe, stateful implementation of a useful Krul v4 subset."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    protocol_version = 4
+    device_name = "KRUL-PC-SIM"
+    device_id = "KRUL-PC-SIM-01"
+    firmware = "sim-1.0.0"
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic,
+                 descriptors: dict[str, dict[str, Any]] | None = None) -> None:
         self._lock = threading.Lock()
         self._clock = clock
         self._started_at = clock()
+        self.descriptors = DESCRIPTORS if descriptors is None else descriptors
         self._pins = {name: 0 for name in PIN_NAMES}
         self._adc_tick = 0
         self._dac_value = 0
@@ -598,7 +605,7 @@ class KrulSimulator:
             command = request.get("cmd")
             if not isinstance(command, str):
                 raise ProtocolFailure(2, "Field 'cmd' must be a string")
-            if command not in DESCRIPTORS:
+            if command not in self.descriptors:
                 raise ProtocolFailure(6, f"Unknown command '{command}'")
             if command == "PING":
                 return DispatchResult(
@@ -615,18 +622,18 @@ class KrulSimulator:
                  params: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if command == "WHOAMI":
             return {
-                "protocol_version": 4,
-                "device_name": "KRUL-PC-SIM",
-                "device_id": "KRUL-PC-SIM-01",
-                "firmware": "sim-1.0.0",
+                "protocol_version": self.protocol_version,
+                "device_name": self.device_name,
+                "device_id": self.device_id,
+                "firmware": self.firmware,
             }, []
         if command == "CMD_LIST":
-            return {"cmd_name": list(DESCRIPTORS)}, []
+            return {"cmd_name": list(self.descriptors)}, []
         if command == "DESCRIBE":
             name = params.get("name")
             if not isinstance(name, str):
                 raise ProtocolFailure(1, "Missing field 'name'")
-            descriptor = DESCRIPTORS.get(name)
+            descriptor = self.descriptors.get(name)
             if descriptor is None:
                 raise ProtocolFailure(6, f"Unknown command '{name}'")
             return descriptor, []

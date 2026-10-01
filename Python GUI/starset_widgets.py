@@ -1899,11 +1899,16 @@ class CommandForm(QGroupBox):
         field_type = field.get("type")
         default = field.get("default")
         constraints = field.get("constraints", {})
-        if field_type == "integer":
+        if field_type in ("integer", "unsigned"):
             widget = QSpinBox()
-            widget.setRange(int(constraints.get("minimum", -2147483648)),
-                            int(constraints.get("maximum", 2147483647)))
-            widget.setValue(int(default if default is not None else widget.minimum()))
+            default_minimum = 0 if field_type == "unsigned" else -2147483648
+            minimum = max(int(constraints.get("minimum", default_minimum)),
+                          -2147483648)
+            maximum = min(int(constraints.get("maximum", 2147483647)),
+                          2147483647)
+            widget.setRange(minimum, maximum)
+            widget.setValue(int(default if default is not None
+                                else widget.minimum()))
             return widget
         if field_type == "float":
             widget = QDoubleSpinBox()
@@ -1968,7 +1973,7 @@ class CommandForm(QGroupBox):
                 "QLabel { border: none; background: transparent; }"
             )
             return output
-        if field_type == "integer":
+        if field_type in ("integer", "unsigned"):
             output = ResultIntLabel()
             output.setTextInteractionFlags(Qt.TextSelectableByMouse)
             output.setWordWrap(True)
