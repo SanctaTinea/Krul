@@ -4,7 +4,12 @@
 Mirrors the command table and result schemas declared in
 ``Apps/app_cm7/src/app_cmd.c``: the same command names, tabs, groups, orders
 and — most importantly — the ``READ_TELEMETRY`` result, whose ``nodes`` array
-is a tagged union of telemetry snapshots and events.
+is a tagged union of telemetry snapshots and events. The telemetry iterator
+commands (``CREATE_TELEMETRY_ITERATOR``, ``TELEMETRY_ITERATOR_NEXT``,
+``READ_TELEMETRY_PARTITION``, ``GET_TELEMETRY_ITERATOR``) reproduce the
+firmware semantics of ``telemetry_iterator_next``: iteration is byte based, an
+exhausted or invalidated iterator reports an execution error, and creating a
+new iterator always restarts at the partition start.
 
 Transport, framing, dispatch and the TCP server come from ``krul_simulator``;
 this module only supplies the SPU descriptor set and command behaviour.
@@ -132,6 +137,18 @@ SPUTELEMNODE_EVENT = 1
 SPUEVENT_CYC_START = 0
 SPUEVENT_CYC_END = 1
 SPUEVENT_POWERUP = 2
+
+# Record sizes in bytes, matching the packed structures of app_spu_telem.h:
+# the discriminator is one byte, a telemetry snapshot is
+# ``sizeof(spu_telemetry_t) == 44``, and events carry either a
+# cycle index/time pair (8 bytes) or a power-up voltage/current pair
+# (4 bytes). They drive the iterator's byte-based read_length/address.
+TELEMETRY_RECORD_BYTES = 1 + 44
+EVENT_CYCLE_RECORD_BYTES = 1 + 8
+EVENT_POWERUP_RECORD_BYTES = 1 + 4
+# Approximate MRAM address of the first telemetry slot
+# (offsetof(spu_telemetry_memory_layout_t, telemetry_section.telemetry[0])).
+TELEMETRY_PARTITION_START = 0x00001000
 
 
 # --------------------------------------------------------------------------
@@ -295,6 +312,8 @@ def _spu_descriptors() -> dict[str, dict[str, Any]]:
                    for index in range(1, 6)]
     ina_pair = [_integer("ina1", "Датчик 1", -32768, 32767),
                 _integer("ina2", "Датчик 2", -32768, 32767)]
+    dac_fields = [_integer("dac1", "Канал 1 (VRF_CH2)", 0, 4095),
+                  _integer("dac2", "Канал 2 (REF_CH5)", 0, 4095)]
 
     anode_result = [
         {"name": "low_dac_level", "label": "Низкий уровень ЦАП",
@@ -358,10 +377,8 @@ def _spu_descriptors() -> dict[str, dict[str, Any]]:
         "DAC_READ": {
             "cmd": "DAC_READ", "tab": "Аналоговые сигналы", "title": "Прочитать ЦАП",
             "group": "ЦАП", "order": 20,
-            "result": [
-                {"name": "dac1", "label": "Канал 1 (VRF_CH2)", "type": "integer"},
-                {"name": "dac2", "label": "Канал 2 (REF_CH5)", "type": "integer"},
-            ],
+            "result": [_object("dac", "Коды ЦАП", dac_fields,
+                               widget="special_adc_group")],
             "autoupdate": _autoupdate(1000),
         },
         "ADC_READ": {
@@ -512,6 +529,42 @@ def _spu_descriptors() -> dict[str, dict[str, Any]]:
             "result": [_array("nodes", "Записи", _telemetry_node_union(),
                               0, READ_TELEMETRY_MAX_COUNT)],
         },
+        "CREATE_TELEMETRY_ITERATOR": {
+            "cmd": "CREATE_TELEMETRY_ITERATOR", "nogui": True,
+            "tab": "СПУ и телеметрия",
+            "title": "Создание телеметрического итератора",
+            "description": "Создаёт итератор внутри СПУ, который считывает "
+                           "каждую запись телеметрии последовательно",
+            "group": "Энергонезависимая память", "order": 220,
+        },
+        "TELEMETRY_ITERATOR_NEXT": {
+            "cmd": "TELEMETRY_ITERATOR_NEXT", "nogui": True,
+            "tab": "СПУ и телеметрия",
+            "title": "Считать запись телеметрического итератора",
+            "description": "Считывает и перемещает телеметрический итератор. "
+                           "Если возникла ошибка, итератор нужно пересоздать",
+            "group": "Энергонезависимая память", "order": 220,
+            "result": [_array("nodes", "Записи", _telemetry_node_union(),
+                              0, READ_TELEMETRY_MAX_COUNT)],
+        },
+        "READ_TELEMETRY_PARTITION": {
+            "cmd": "READ_TELEMETRY_PARTITION", "nogui": True,
+            "tab": "СПУ и телеметрия",
+            "title": "Чтение раздела телеметрии",
+            "description": "Читает раздел телеметрии",
+            "group": "Телеметрия", "order": 180,
+            "result": [_unsigned("start_address", "Стартовый адрес"),
+                       _unsigned("length", "Длина")],
+        },
+        "GET_TELEMETRY_ITERATOR": {
+            "cmd": "GET_TELEMETRY_ITERATOR", "nogui": True,
+            "tab": "СПУ и телеметрия",
+            "title": "Получить состояние телеметрического итератора",
+            "description": "Отображает данные телеметрического итератора",
+            "group": "Телеметрия", "order": 180,
+            "result": [_unsigned("address", "Текущий адрес"),
+                       _unsigned("read_length", "Пройденная длина")],
+        },
         "WRITE_CONFIG_TO_MRAM": {
             "cmd": "WRITE_CONFIG_TO_MRAM", "tab": "СПУ и телеметрия",
             "title": "Сохранить конфигурацию в MRAM",
@@ -617,7 +670,12 @@ class SpuSimulator(KrulSimulator):
         self._telemetry_log: deque[dict[str, Any]] = deque(maxlen=256)
         self._telemetry_tick = 0
         self._cycle_index = 0
-        self._telemetry_log.append(self._event_node(SPUEVENT_POWERUP, 0))
+        # Bytes ever written to the ring. The gap with the current log length
+        # is how many bytes of older records the bounded deque dropped, which
+        # shifts the partition start_address just like a wrapping ring.
+        self._telemetry_written_bytes = 0
+        self._telemetry_iterator: dict[str, Any] | None = None
+        self._push_record(self._event_node(SPUEVENT_POWERUP, 0))
 
     # -- helpers ----------------------------------------------------------
 
@@ -686,12 +744,42 @@ class SpuSimulator(KrulSimulator):
         self._telemetry_tick += 1
         tick = self._telemetry_tick
         if tick % 9 == 0:
-            self._telemetry_log.append(self._event_node(SPUEVENT_CYC_END, tick))
+            self._push_record(self._event_node(SPUEVENT_CYC_END, tick))
         elif tick % 5 == 0:
             self._cycle_index += 1
-            self._telemetry_log.append(self._event_node(SPUEVENT_CYC_START, tick))
+            self._push_record(self._event_node(SPUEVENT_CYC_START, tick))
         else:
-            self._telemetry_log.append(self._telemetry_node(tick))
+            self._push_record(self._telemetry_node(tick))
+
+    def _push_record(self, node: dict[str, Any]) -> None:
+        self._telemetry_log.append(node)
+        self._telemetry_written_bytes += self._node_size(node)
+
+    @staticmethod
+    def _node_size(node: dict[str, Any]) -> int:
+        """Byte size of a record in the ring (mirrors get_telemetry_node_size)."""
+        if node.get("discrim") == SPUTELEMNODE_TELEMETRY:
+            return TELEMETRY_RECORD_BYTES
+        if node.get("event_kind") == SPUEVENT_POWERUP:
+            return EVENT_POWERUP_RECORD_BYTES
+        return EVENT_CYCLE_RECORD_BYTES
+
+    def _telemetry_partition(self) -> dict[str, int]:
+        """Current telemetry partition as seen by the firmware iterator."""
+        length = sum(self._node_size(node) for node in self._telemetry_log)
+        dropped = self._telemetry_written_bytes - length
+        return {"start_address": TELEMETRY_PARTITION_START + dropped,
+                "length": length}
+
+    def _record_at_offset(self, offset: int) -> tuple[dict[str, Any], int] | None:
+        """Return the record starting exactly at *offset*, or None."""
+        cursor = 0
+        for node in self._telemetry_log:
+            size = self._node_size(node)
+            if cursor == offset:
+                return node, size
+            cursor += size
+        return None
 
     # -- dispatch ---------------------------------------------------------
 
@@ -755,7 +843,7 @@ class SpuSimulator(KrulSimulator):
 
     def _cmd_dac_read(self, params: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
-            return {"dac1": self._dac[0], "dac2": self._dac[1]}
+            return {"dac": {"dac1": self._dac[0], "dac2": self._dac[1]}}
 
     def _cmd_adc_read(self, params: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -914,6 +1002,56 @@ class SpuSimulator(KrulSimulator):
             self._append_telemetry()
             nodes = list(self._telemetry_log)[-count:]
         return {"nodes": nodes}
+
+    def _cmd_create_telemetry_iterator(self, params: dict[str, Any]
+                                       ) -> dict[str, Any]:
+        with self._lock:
+            partition = self._telemetry_partition()
+            self._telemetry_iterator = {
+                "address": partition["start_address"],
+                "read_length": 0,
+                # Snapshot: a partition change invalidates the iterator, as
+                # memcmp(prev_partition, part) does in telemetry_iterator_next.
+                "partition": partition,
+            }
+        return {}
+
+    def _cmd_get_telemetry_iterator(self, params: dict[str, Any]
+                                    ) -> dict[str, Any]:
+        with self._lock:
+            iterator = self._telemetry_iterator
+            if iterator is None:
+                return {"address": 0, "read_length": 0}
+            return {"address": iterator["address"],
+                    "read_length": iterator["read_length"]}
+
+    def _cmd_read_telemetry_partition(self, params: dict[str, Any]
+                                      ) -> dict[str, Any]:
+        with self._lock:
+            return self._telemetry_partition()
+
+    def _cmd_telemetry_iterator_next(self, params: dict[str, Any]
+                                     ) -> dict[str, Any]:
+        with self._lock:
+            iterator = self._telemetry_iterator
+            if iterator is None:
+                raise ProtocolFailure(7, "Telemetry iterator is not created")
+            partition = self._telemetry_partition()
+            if partition["length"] <= 0:
+                raise ProtocolFailure(7, "Telemetry partition is empty")
+            if partition != iterator["partition"]:
+                raise ProtocolFailure(
+                    7, "Telemetry partition changed; recreate the iterator")
+            if iterator["read_length"] >= partition["length"]:
+                raise ProtocolFailure(7, "Telemetry iterator reached the end")
+            found = self._record_at_offset(iterator["read_length"])
+            if found is None:
+                raise ProtocolFailure(7, "Corrupt telemetry record")
+            node, size = found
+            iterator["read_length"] += size
+            iterator["address"] = (partition["start_address"]
+                                   + iterator["read_length"])
+            return {"nodes": [dict(node)]}
 
     def _cmd_write_config_to_mram(self, params: dict[str, Any]
                                   ) -> dict[str, Any]:

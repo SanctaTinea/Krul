@@ -264,7 +264,7 @@ def test_responsive_card_grid_uses_width_hints_and_reflows(qtbot) -> None:
     )
 
 
-def test_responsive_card_grid_backfills_space_above_full_width_card(qtbot) -> None:
+def test_grid_stacks_later_cards_below_earlier_full_width_card(qtbot) -> None:
     class SizedCard(gui.QWidget):
         def __init__(self, height: int) -> None:
             super().__init__()
@@ -289,10 +289,103 @@ def test_responsive_card_grid_backfills_space_above_full_width_card(qtbot) -> No
     qtbot.wait(20)
 
     assert grid._card_spans[full] == 3
-    assert full.geometry().y() > 0
-    assert trailing.geometry().y() == 0
-    assert trailing.geometry().x() > 0
-    assert trailing.geometry().bottom() < full.geometry().y()
+    assert tall.geometry().y() == 0
+    assert full.geometry().y() >= tall.geometry().bottom()
+    # Order preserving: a card placed after the full-width card stays below it
+    # instead of backfilling a hole above it, so growing a card above can
+    # never force it to move.
+    assert trailing.geometry().y() >= full.geometry().bottom()
+    assert trailing.geometry().x() == 0
+
+
+def test_growing_a_card_never_reorders_later_cards(qtbot) -> None:
+    class SizedCard(gui.QWidget):
+        def __init__(self, height: int) -> None:
+            super().__init__()
+            self.hint_height = height
+
+        def sizeHint(self):  # noqa: N802 - Qt API
+            return gui.QSize(180, self.hint_height)
+
+        def minimumSizeHint(self):  # noqa: N802 - Qt API
+            return gui.QSize(120, self.hint_height)
+
+    grid = gui.ResponsiveCardGrid(min_column_width=220, max_columns=3)
+    first = SizedCard(100)
+    second = SizedCard(120)
+    full = SizedCard(100)
+    full.setProperty("gridSpanMode", "full")
+    below_full = SizedCard(90)
+    last = SizedCard(90)
+    cards = [first, second, full, below_full, last]
+    for card in cards:
+        grid.add_card(card)
+    qtbot.addWidget(grid)
+    grid.resize(720, 1)
+    grid.show()
+    qtbot.wait(20)
+
+    before = {card: (card.geometry().x(), card.geometry().y())
+              for card in cards}
+
+    # Unfolding a command grows this card a lot.
+    second.hint_height = 520
+    grid.request_relayout()
+    qtbot.wait(20)
+    after = {card: (card.geometry().x(), card.geometry().y())
+             for card in cards}
+
+    # The grown card keeps its column and its row.
+    assert after[second][0] == before[second][0]
+    assert after[second][1] == before[second][1]
+    # Cards after it only move down, never above their previous position.
+    for card in (full, below_full, last):
+        assert after[card][0] == before[card][0]
+        assert after[card][1] >= before[card][1]
+
+
+def test_grid_keeps_card_columns_when_height_changes(qtbot) -> None:
+    class SizedCard(gui.QWidget):
+        def __init__(self, height: int) -> None:
+            super().__init__()
+            self.hint_height = height
+
+        def sizeHint(self):  # noqa: N802 - Qt API
+            return gui.QSize(180, self.hint_height)
+
+        def minimumSizeHint(self):  # noqa: N802 - Qt API
+            return gui.QSize(120, self.hint_height)
+
+    grid = gui.ResponsiveCardGrid(min_column_width=220, max_columns=3)
+    cards = [SizedCard(height) for height in (100, 120, 90, 110, 130, 80)]
+    for card in cards:
+        grid.add_card(card)
+    qtbot.addWidget(grid)
+    grid.resize(720, 1)
+    grid.show()
+    qtbot.wait(20)
+    assert grid._columns == 3
+    assert len({card.geometry().x() for card in cards}) > 1
+
+    before = {card: (card.geometry().x(), card.geometry().y())
+              for card in cards}
+
+    # Unfolding one card makes it much taller; the others must not jump
+    # to another column, only slide down.
+    cards[0].hint_height = 400
+    grid.request_relayout()
+    qtbot.wait(20)
+    grown = {card: (card.geometry().x(), card.geometry().y())
+             for card in cards}
+    assert all(before[card][0] == grown[card][0] for card in cards)
+
+    # Folding it back restores every card to its original position.
+    cards[0].hint_height = 100
+    grid.request_relayout()
+    qtbot.wait(20)
+    restored = {card: (card.geometry().x(), card.geometry().y())
+                for card in cards}
+    assert restored == before
 
 
 def test_io_panel_has_no_horizontal_layout_margins(qtbot) -> None:

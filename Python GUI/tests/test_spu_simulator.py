@@ -292,3 +292,120 @@ def test_read_telemetry_renders_in_command_form(qtbot) -> None:
     assert "Телеметрия" in texts and "Событие" in texts
     assert "Vin" in texts
     assert "Номер циклограммы" in texts
+
+
+def test_iterator_descriptors_mirror_the_firmware() -> None:
+    simulator = SpuSimulator()
+    names = set(request(simulator, "CMD_LIST", 1)["result"]["cmd_name"])
+    assert {"CREATE_TELEMETRY_ITERATOR", "TELEMETRY_ITERATOR_NEXT",
+            "READ_TELEMETRY_PARTITION", "GET_TELEMETRY_ITERATOR"} <= names
+
+    iterator = request(simulator, "DESCRIBE", 2,
+                       {"name": "TELEMETRY_ITERATOR_NEXT"})["result"]
+    assert iterator["nogui"] is True
+    nodes = iterator["result"][0]
+    assert nodes["name"] == "nodes"
+    assert nodes["items"]["type"] == "union"
+    assert [variant["value"]
+            for variant in nodes["items"]["variants"]] == [0, 1]
+
+    partition = request(simulator, "DESCRIBE", 3,
+                        {"name": "READ_TELEMETRY_PARTITION"})["result"]
+    assert [field["name"] for field in partition["result"]] == [
+        "start_address", "length"]
+
+    state = request(simulator, "DESCRIBE", 4,
+                    {"name": "GET_TELEMETRY_ITERATOR"})["result"]
+    assert [field["name"] for field in state["result"]] == [
+        "address", "read_length"]
+
+
+def test_telemetry_iterator_walks_every_record_once() -> None:
+    simulator = SpuSimulator()
+    for index in range(20):
+        request(simulator, "READ_TELEMETRY", index + 1, {"count": 1})
+    total_records = len(simulator._telemetry_log)
+
+    partition = request(simulator, "READ_TELEMETRY_PARTITION", 100)["result"]
+    assert partition["length"] > 0
+    assert partition["start_address"] > 0
+
+    # Before creation the firmware singleton is zeroed and next fails.
+    idle = request(simulator, "GET_TELEMETRY_ITERATOR", 101)["result"]
+    assert idle == {"address": 0, "read_length": 0}
+    assert request(simulator, "TELEMETRY_ITERATOR_NEXT", 102)["success"] is False
+
+    assert request(simulator, "CREATE_TELEMETRY_ITERATOR", 103)["success"]
+    created = request(simulator, "GET_TELEMETRY_ITERATOR", 104)["result"]
+    assert created == {"address": partition["start_address"],
+                       "read_length": 0}
+
+    nodes = []
+    while True:
+        response = request(simulator, "TELEMETRY_ITERATOR_NEXT",
+                           200 + len(nodes))
+        if not response["success"]:
+            break
+        assert len(response["result"]["nodes"]) == 1
+        nodes.append(response["result"]["nodes"][0])
+
+    assert len(nodes) == total_records
+    assert all(node["discrim"] in (0, 1) for node in nodes)
+    end = request(simulator, "GET_TELEMETRY_ITERATOR", 300)["result"]
+    assert end["read_length"] == partition["length"]
+
+
+def test_iterator_is_invalidated_when_the_partition_changes() -> None:
+    simulator = SpuSimulator()
+    for index in range(5):
+        request(simulator, "READ_TELEMETRY", index + 1, {"count": 1})
+
+    assert request(simulator, "CREATE_TELEMETRY_ITERATOR", 50)["success"]
+    assert request(simulator, "TELEMETRY_ITERATOR_NEXT", 51)["success"]
+
+    # Appending telemetry grows the partition: the snapshot no longer matches.
+    request(simulator, "READ_TELEMETRY", 52, {"count": 1})
+    stale = request(simulator, "TELEMETRY_ITERATOR_NEXT", 53)
+    assert stale["success"] is False
+    assert stale["error"]["code"] == 7
+
+    # A fresh iterator recovers and restarts from the partition start.
+    assert request(simulator, "CREATE_TELEMETRY_ITERATOR", 54)["success"]
+    restarted = request(simulator, "GET_TELEMETRY_ITERATOR", 55)["result"]
+    assert restarted["read_length"] == 0
+    first = request(simulator, "TELEMETRY_ITERATOR_NEXT", 56)["result"]
+    assert first["nodes"][0]["discrim"] in (0, 1)
+
+
+def test_iterator_next_cbor_round_trip_decodes_field_names() -> None:
+    simulator = SpuSimulator()
+    client = FrameParser()
+
+    def exchange(payload: dict) -> dict:
+        request_frames, errors = FrameParser().feed(
+            encode_frame(payload, FORMAT_CBOR))
+        assert not errors and len(request_frames) == 1
+        decoded_request = decode_payload(request_frames[0].payload, FORMAT_CBOR)
+        response = simulator.dispatch(decoded_request).response
+        frames, errors = client.feed(encode_frame(response, FORMAT_CBOR))
+        assert not errors and len(frames) == 1
+        return decode_payload(frames[0].payload, FORMAT_CBOR)
+
+    # Register the union field tags exactly as the export tool does.
+    exchange({"id": 1, "cmd": "DESCRIBE",
+              "params": {"name": "TELEMETRY_ITERATOR_NEXT"}})
+    for index in range(5):
+        simulator.dispatch({"id": 10 + index, "cmd": "READ_TELEMETRY",
+                            "params": {"count": 1}})
+
+    exchange({"id": 2, "cmd": "CREATE_TELEMETRY_ITERATOR"})
+    decoded = exchange({"id": 3, "cmd": "TELEMETRY_ITERATOR_NEXT"})
+    assert decoded["success"]
+    assert len(decoded["result"]["nodes"]) == 1
+    node = decoded["result"]["nodes"][0]
+    assert node["discrim"] in (0, 1)
+    assert "time" in node
+    if node["discrim"] == 0:
+        assert "vin" in node
+    else:
+        assert "event_kind" in node

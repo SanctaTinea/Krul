@@ -630,6 +630,10 @@ class ResponsiveCardGrid(QWidget):
         self._columns = 1
         self._content_height = 0
         self._card_spans: dict[QWidget, int] = {}
+        # Last (column, top, span) per card, so a resize in height never makes
+        # a card jump sideways: existing cards keep their column and only slide
+        # vertically, while the column count stays the same.
+        self._card_slots: dict[QWidget, tuple[int, float, int]] = {}
         self._relayout_timer = QTimer(self)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
@@ -736,50 +740,72 @@ class ResponsiveCardGrid(QWidget):
                 // (self.min_column_width + spacing_x),
             ),
         )
-        self._columns = columns
         column_width = (
             available_width - spacing_x * (columns - 1)
         ) / columns
-        occupied: list[tuple[int, int, float, float]] = []
+        if columns != self._columns:
+            # The column count changed, so previously recorded slots no longer
+            # apply and every card is assigned a column from scratch.
+            self._card_slots.clear()
+        self._columns = columns
+        heights = [0.0] * columns
         self._card_spans.clear()
+        slots: dict[QWidget, tuple[int, float, int]] = {}
 
         for card in self.cards:
             if card.isHidden():
+                previous = self._card_slots.get(card)
+                if previous is not None:
+                    slots[card] = previous
                 continue
-            span = self._span_for_card(card, columns, column_width)
+
+            previous = self._card_slots.get(card)
+            start: int | None = None
+            span: int | None = None
+            if previous is not None:
+                previous_start, _previous_top, previous_span = previous
+                if 0 < previous_span <= columns and \
+                        previous_start + previous_span <= columns:
+                    start = previous_start
+                    span = previous_span
+            if span is None:
+                span = self._span_for_card(card, columns, column_width)
+            if start is None:
+                start = self._shortest_column(heights, span)
+
             width = column_width * span + spacing_x * (span - 1)
             height = self._height_for_width(card, round(width))
-            candidates: list[tuple[float, int]] = []
-            for start in range(columns - span + 1):
-                end = start + span
-                horizontal = [
-                    rectangle for rectangle in occupied
-                    if start < rectangle[1] and end > rectangle[0]
-                ]
-                possible_tops = sorted({0.0, *(item[3] for item in horizontal)})
-                for top in possible_tops:
-                    bottom = top + height + spacing_y
-                    if all(
-                        bottom <= item[2] or top >= item[3]
-                        for item in horizontal
-                    ):
-                        candidates.append((top, start))
-                        break
-            top, start = min(candidates)
+            # Order-preserving masonry: a card sits below everything already
+            # placed in its columns. Its top therefore depends only on the
+            # cards before it, so growing a card (unfolding a command) never
+            # moves it or the cards above it - only those after it shift down.
+            top = max(heights[start:start + span])
             left = start * (column_width + spacing_x)
             card.setGeometry(round(left), round(top), round(width), height)
             bottom = top + height + spacing_y
-            occupied.append((start, start + span, top, bottom))
+            for column in range(start, start + span):
+                heights[column] = bottom
             self._card_spans[card] = span
+            slots[card] = (start, top, span)
 
-        content_height = max(
-            0,
-            round(max((item[3] for item in occupied), default=0.0) - spacing_y),
-        )
+        self._card_slots = slots
+        content_height = max(0, round(max(heights, default=0.0) - spacing_y))
         if self._content_height != content_height:
             self._content_height = content_height
             self.setFixedHeight(content_height)
             self.updateGeometry()
+
+    @staticmethod
+    def _shortest_column(heights: list[float], span: int) -> int:
+        """Leftmost column range whose current bottom is the smallest."""
+        best_start = 0
+        best_top = max(heights[0:span])
+        for start in range(1, len(heights) - span + 1):
+            top = max(heights[start:start + span])
+            if top < best_top:
+                best_top = top
+                best_start = start
+        return best_start
 
 
 class CollapseHeader(QToolButton):
