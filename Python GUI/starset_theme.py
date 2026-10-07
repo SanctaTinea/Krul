@@ -21,7 +21,7 @@ IO_FILTER_FIELD_SPACING = 8
 IO_SECTION_TOP_MARGIN = 15
 IO_OUTPUT_ACTIONS_TOP_SPACING = 12
 PIN_GRID_VERTICAL_SPACING = 2
-PIN_GRID_HORIZONTAL_SPACING = 15
+PIN_GRID_HORIZONTAL_SPACING = 40
 PIN_CARD_VERTICAL_MARGIN = 3
 
 
@@ -294,6 +294,10 @@ def application_stylesheet() -> str:
             color: {c["text_secondary"]};
         }}
 
+        QLabel#testDescription {{
+            color: {c["white"]};
+        }}
+
         QLabel#welcomeTitle {{
             color: {c["welcome_accent"]};
         }}
@@ -452,4 +456,3 @@ def application_stylesheet() -> str:
             background: transparent;
         }}
     """
-
