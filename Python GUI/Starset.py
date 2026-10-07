@@ -8,6 +8,7 @@ import math
 import sys
 import time
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Callable
 
 import serial
@@ -18,7 +19,15 @@ from krul_wire import (
     FORMAT_JSON,
 )
 from PySide6.QtCore import QEvent, QObject, QRectF, QSize, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPalette, QTextCharFormat, QTextCursor
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QIcon,
+    QPainter,
+    QPalette,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractSpinBox,
@@ -34,6 +43,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -93,6 +103,7 @@ class MainWindow(QMainWindow):
         self._session_rx_bytes = 0
         self._connected_at: float | None = None
         self._disconnected_elapsed = 0.0
+        self._adc_single_coefficient = self._read_adc_single_coefficient()
         self._build_ui()
         application = QApplication.instance()
         if application is not None:
@@ -168,6 +179,27 @@ class MainWindow(QMainWindow):
         self._update_theme_button()
         self.device_label = QLabel("МК: -")
         connection.addWidget(self.device_label, 1)
+
+        self.adc_mode_button = QToolButton()
+        self.adc_mode_button.setObjectName("utilityButton")
+        self.adc_mode_button.setToolTip("Настройки отображения значений АЦП")
+        self.adc_mode_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.adc_mode_button.setIconSize(QSize(18, 18))
+        self.adc_mode_button.clicked.connect(self._show_adc_menu)
+        self.adc_mode_menu = QMenu(self.adc_mode_button)
+        self.adc_single_coefficient_action = QAction(
+            "Использовать один коэффициент для АЦП", self.adc_mode_menu
+        )
+        self.adc_single_coefficient_action.setCheckable(True)
+        self.adc_single_coefficient_action.setChecked(
+            self._adc_single_coefficient
+        )
+        self.adc_single_coefficient_action.toggled.connect(
+            self._toggle_adc_single_coefficient
+        )
+        self.adc_mode_menu.addAction(self.adc_single_coefficient_action)
+        connection.addWidget(self.adc_mode_button)
+        self._update_adc_mode_icon()
         root.addLayout(connection)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -332,6 +364,20 @@ class MainWindow(QMainWindow):
             else "Переключить на тёмную тему"
         )
 
+    def _update_adc_mode_icon(self) -> None:
+        icon_name = (
+            "gear-dark.svg" if current_theme() == "dark" else "gear-light.svg"
+        )
+        icon_path = Path(__file__).resolve().parent / "assets" / icon_name
+        self.adc_mode_button.setIcon(QIcon(icon_path.as_posix()))
+
+    def _show_adc_menu(self) -> None:
+        self.adc_mode_menu.exec(
+            self.adc_mode_button.mapToGlobal(
+                self.adc_mode_button.rect().bottomLeft()
+            )
+        )
+
     def _toggle_theme(self) -> None:
         set_theme("light" if current_theme() == "dark" else "dark")
         application = QApplication.instance()
@@ -339,6 +385,7 @@ class MainWindow(QMainWindow):
             application.setPalette(application_palette())
             application.setStyleSheet(application_stylesheet())
         self._update_theme_button()
+        self._update_adc_mode_icon()
         self._update_connect_button_style()
         for panel in self.io_panels:
             for card in panel.cards.values():
@@ -938,6 +985,24 @@ class MainWindow(QMainWindow):
                         lambda _value, profile_key=key, source=widget:
                         self._adc_profile_changed(profile_key, source)
                     )
+        self._apply_adc_coefficient_mode()
+
+    def _read_adc_single_coefficient(self) -> bool:
+        settings = self.profile_store.settings()
+        return bool(settings.get("adc_single_coefficient", True))
+
+    def _toggle_adc_single_coefficient(self, checked: bool) -> None:
+        self._adc_single_coefficient = bool(checked)
+        settings = self.profile_store.settings()
+        settings["adc_single_coefficient"] = self._adc_single_coefficient
+        self.profile_store.set_settings(settings)
+        self.profile_save_timer.start()
+        self._apply_adc_coefficient_mode()
+
+    def _apply_adc_coefficient_mode(self) -> None:
+        for widgets in self._adc_profile_widgets.values():
+            for widget in widgets:
+                widget.set_single_coefficient(self._adc_single_coefficient)
 
     def _adc_profile_changed(
         self,

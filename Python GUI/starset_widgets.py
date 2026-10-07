@@ -339,6 +339,7 @@ class SpecialAdcResultWidget(ResultWidget):
     def __init__(self, _field: dict[str, Any]) -> None:
         super().__init__(_field)
         self._raw_value: int | None = None
+        self._single_coefficient = True
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -349,7 +350,12 @@ class SpecialAdcResultWidget(ResultWidget):
         self.raw_output.setToolTip("RAW значение АЦП")
         layout.addWidget(self.raw_output)
 
-        layout.addWidget(QLabel("Коэф.:"))
+        # Single-coefficient mode: one correction multiplier.
+        self.single_controls = QWidget()
+        single_layout = QHBoxLayout(self.single_controls)
+        single_layout.setContentsMargins(0, 0, 0, 0)
+        single_layout.setSpacing(6)
+        single_layout.addWidget(QLabel("Коэф.:"))
         self.correction_coefficient = QDoubleSpinBox()
         self.correction_coefficient.setObjectName("adcCorrectionCoefficient")
         self.correction_coefficient.setDecimals(6)
@@ -359,7 +365,57 @@ class SpecialAdcResultWidget(ResultWidget):
         self.correction_coefficient.setToolTip("Поправочный коэффициент АЦП")
         self.correction_coefficient.setFixedWidth(120)
         self.correction_coefficient.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        layout.addWidget(self.correction_coefficient)
+        single_layout.addWidget(self.correction_coefficient)
+        layout.addWidget(self.single_controls)
+
+        # Legacy mode: reference voltage, coefficient, base voltage, bits.
+        self.legacy_controls = QWidget()
+        legacy_layout = QHBoxLayout(self.legacy_controls)
+        legacy_layout.setContentsMargins(0, 0, 0, 0)
+        legacy_layout.setSpacing(6)
+        legacy_layout.addWidget(QLabel("Vоп:"))
+        self.reference_voltage = QDoubleSpinBox()
+        self.reference_voltage.setObjectName("adcReferenceVoltage")
+        self.reference_voltage.setDecimals(6)
+        self.reference_voltage.setRange(0.0, 1e9)
+        self.reference_voltage.setSingleStep(0.1)
+        self.reference_voltage.setValue(3.3)
+        self.reference_voltage.setToolTip("Опорное напряжение")
+        self.reference_voltage.setFixedWidth(90)
+        self.reference_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.reference_voltage)
+        legacy_layout.addWidget(QLabel("Коэф.:"))
+        self.scale_factor = QDoubleSpinBox()
+        self.scale_factor.setObjectName("adcScaleFactor")
+        self.scale_factor.setDecimals(6)
+        self.scale_factor.setRange(-1e9, 1e9)
+        self.scale_factor.setSingleStep(0.1)
+        self.scale_factor.setValue(1.0)
+        self.scale_factor.setToolTip("Дополнительный коэффициент")
+        self.scale_factor.setFixedWidth(90)
+        self.scale_factor.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.scale_factor)
+        legacy_layout.addWidget(QLabel("Vбаз:"))
+        self.base_voltage = QDoubleSpinBox()
+        self.base_voltage.setObjectName("adcBaseVoltage")
+        self.base_voltage.setDecimals(6)
+        self.base_voltage.setRange(-1e9, 1e9)
+        self.base_voltage.setSingleStep(0.1)
+        self.base_voltage.setValue(0.0)
+        self.base_voltage.setToolTip("Напряжение, добавляемое к результату")
+        self.base_voltage.setFixedWidth(90)
+        self.base_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.base_voltage)
+        legacy_layout.addWidget(QLabel("Бит:"))
+        self.resolution_bits = QSpinBox()
+        self.resolution_bits.setObjectName("adcResolutionBits")
+        self.resolution_bits.setRange(1, 32)
+        self.resolution_bits.setValue(12)
+        self.resolution_bits.setToolTip("Разрядность АЦП")
+        self.resolution_bits.setFixedWidth(30)
+        self.resolution_bits.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.resolution_bits)
+        layout.addWidget(self.legacy_controls)
 
         layout.addWidget(QLabel("="))
         self.scaled_output = QLabel("—")
@@ -370,13 +426,13 @@ class SpecialAdcResultWidget(ResultWidget):
         self.scaled_output.setStyleSheet(
             "QLabel { padding: 3px 8px; font-weight: 600; }"
         )
-        self.scaled_output.setToolTip("RAW × коэффициент")
         layout.addWidget(self.scaled_output)
         layout.addStretch()
 
-        self.correction_coefficient.valueChanged.connect(
-            self._update_scaled_value
-        )
+        for control in self.profile_controls().values():
+            control.valueChanged.connect(self._update_scaled_value)
+
+        self.set_single_coefficient(True)
 
     def setValue(self, value: Any) -> None:
         try:
@@ -389,11 +445,35 @@ class SpecialAdcResultWidget(ResultWidget):
         )
         self._update_scaled_value()
 
-    def profile_controls(self) -> dict[str, QDoubleSpinBox]:
-        return {"correction_coefficient": self.correction_coefficient}
+    def profile_controls(self) -> dict[str, QAbstractSpinBox]:
+        return {
+            "correction_coefficient": self.correction_coefficient,
+            "reference_voltage": self.reference_voltage,
+            "scale_factor": self.scale_factor,
+            "base_voltage": self.base_voltage,
+            "resolution_bits": self.resolution_bits,
+        }
 
-    def profile_configuration(self) -> dict[str, float]:
-        return {"correction_coefficient": self.correction_coefficient.value()}
+    def profile_configuration(self) -> dict[str, float | int]:
+        return {
+            "correction_coefficient": self.correction_coefficient.value(),
+            "reference_voltage": self.reference_voltage.value(),
+            "scale_factor": self.scale_factor.value(),
+            "base_voltage": self.base_voltage.value(),
+            "resolution_bits": self.resolution_bits.value(),
+        }
+
+    def set_single_coefficient(self, enabled: bool) -> None:
+        """Switch between one multiplier and the legacy four-field scaling."""
+
+        self._single_coefficient = bool(enabled)
+        self.single_controls.setVisible(self._single_coefficient)
+        self.legacy_controls.setVisible(not self._single_coefficient)
+        self.scaled_output.setToolTip(
+            "RAW × коэффициент" if self._single_coefficient
+            else "RAW × Vоп × коэффициент / (2^разрядность − 1) + Vбаз"
+        )
+        self._update_scaled_value()
 
     def apply_profile_configuration(self, config: dict[str, Any]) -> None:
         controls = self.profile_controls()
@@ -414,7 +494,17 @@ class SpecialAdcResultWidget(ResultWidget):
             self.scaled_output.setText("—")
             return
 
-        scaled = self._raw_value * self.correction_coefficient.value()
+        if self._single_coefficient:
+            scaled = self._raw_value * self.correction_coefficient.value()
+        else:
+            full_scale = (1 << self.resolution_bits.value()) - 1
+            scaled = (
+                self._raw_value
+                * self.reference_voltage.value()
+                * self.scale_factor.value()
+                / full_scale
+                + self.base_voltage.value()
+            )
         self.scaled_output.setText(f"{scaled:.9g}")
 
 
@@ -453,13 +543,20 @@ class SpecialAdcGroupResultWidget(ResultWidget):
         self._raw_values: dict[str, int | None] = {}
         self.raw_outputs: dict[str, ResultIntLabel] = {}
         self.scaled_outputs: dict[str, QLabel] = {}
+        self._single_coefficient = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 0, 8)
         layout.setSpacing(6)
 
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Коэф.:"))
+
+        # Single-coefficient mode: one shared correction multiplier.
+        self.single_controls = QWidget()
+        single_layout = QHBoxLayout(self.single_controls)
+        single_layout.setContentsMargins(0, 0, 0, 0)
+        single_layout.setSpacing(6)
+        single_layout.addWidget(QLabel("Коэф.:"))
         self.correction_coefficient = QDoubleSpinBox()
         self.correction_coefficient.setObjectName("adcGroupCorrectionCoefficient")
         self.correction_coefficient.setDecimals(6)
@@ -471,7 +568,60 @@ class SpecialAdcGroupResultWidget(ResultWidget):
         )
         self.correction_coefficient.setFixedWidth(120)
         self.correction_coefficient.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        controls.addWidget(self.correction_coefficient)
+        single_layout.addWidget(self.correction_coefficient)
+        controls.addWidget(self.single_controls)
+
+        # Legacy mode: reference voltage, coefficient, base voltage, bits.
+        self.legacy_controls = QWidget()
+        legacy_layout = QHBoxLayout(self.legacy_controls)
+        legacy_layout.setContentsMargins(0, 0, 0, 0)
+        legacy_layout.setSpacing(6)
+        legacy_layout.addWidget(QLabel("Vоп:"))
+        self.reference_voltage = QDoubleSpinBox()
+        self.reference_voltage.setObjectName("adcGroupReferenceVoltage")
+        self.reference_voltage.setDecimals(6)
+        self.reference_voltage.setRange(0.0, 1e9)
+        self.reference_voltage.setSingleStep(0.1)
+        self.reference_voltage.setValue(3.3)
+        self.reference_voltage.setToolTip("Опорное напряжение группы")
+        self.reference_voltage.setFixedWidth(90)
+        self.reference_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.reference_voltage)
+        legacy_layout.addWidget(QLabel("Коэф.:"))
+        self.scale_factor = QDoubleSpinBox()
+        self.scale_factor.setObjectName("adcGroupScaleFactor")
+        self.scale_factor.setDecimals(6)
+        self.scale_factor.setRange(-1e9, 1e9)
+        self.scale_factor.setSingleStep(0.1)
+        self.scale_factor.setValue(1.0)
+        self.scale_factor.setToolTip("Общий дополнительный коэффициент")
+        self.scale_factor.setFixedWidth(90)
+        self.scale_factor.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.scale_factor)
+        legacy_layout.addWidget(QLabel("Vбаз:"))
+        self.base_voltage = QDoubleSpinBox()
+        self.base_voltage.setObjectName("adcGroupBaseVoltage")
+        self.base_voltage.setDecimals(6)
+        self.base_voltage.setRange(-1e9, 1e9)
+        self.base_voltage.setSingleStep(0.1)
+        self.base_voltage.setValue(0.0)
+        self.base_voltage.setToolTip(
+            "Напряжение, добавляемое к результатам группы"
+        )
+        self.base_voltage.setFixedWidth(90)
+        self.base_voltage.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.base_voltage)
+        legacy_layout.addWidget(QLabel("Бит:"))
+        self.resolution_bits = QSpinBox()
+        self.resolution_bits.setObjectName("adcGroupResolutionBits")
+        self.resolution_bits.setRange(1, 32)
+        self.resolution_bits.setValue(12)
+        self.resolution_bits.setToolTip("Общая разрядность АЦП")
+        self.resolution_bits.setFixedWidth(30)
+        self.resolution_bits.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        legacy_layout.addWidget(self.resolution_bits)
+        controls.addWidget(self.legacy_controls)
+
         controls.addStretch()
         layout.addLayout(controls)
 
@@ -511,9 +661,10 @@ class SpecialAdcGroupResultWidget(ResultWidget):
         values.setColumnStretch(3, 1)
         layout.addLayout(values)
 
-        self.correction_coefficient.valueChanged.connect(
-            self._update_scaled_values
-        )
+        for control in self.profile_controls().values():
+            control.valueChanged.connect(self._update_scaled_values)
+
+        self.set_single_coefficient(True)
 
     def setValue(self, value: Any) -> None:
         result = value if isinstance(value, dict) else {}
@@ -527,11 +678,37 @@ class SpecialAdcGroupResultWidget(ResultWidget):
             raw_output.setText("—" if parsed_value is None else str(parsed_value))
         self._update_scaled_values()
 
-    def profile_controls(self) -> dict[str, QDoubleSpinBox]:
-        return {"correction_coefficient": self.correction_coefficient}
+    def profile_controls(self) -> dict[str, QAbstractSpinBox]:
+        return {
+            "correction_coefficient": self.correction_coefficient,
+            "reference_voltage": self.reference_voltage,
+            "scale_factor": self.scale_factor,
+            "base_voltage": self.base_voltage,
+            "resolution_bits": self.resolution_bits,
+        }
 
-    def profile_configuration(self) -> dict[str, float]:
-        return {"correction_coefficient": self.correction_coefficient.value()}
+    def profile_configuration(self) -> dict[str, float | int]:
+        return {
+            "correction_coefficient": self.correction_coefficient.value(),
+            "reference_voltage": self.reference_voltage.value(),
+            "scale_factor": self.scale_factor.value(),
+            "base_voltage": self.base_voltage.value(),
+            "resolution_bits": self.resolution_bits.value(),
+        }
+
+    def set_single_coefficient(self, enabled: bool) -> None:
+        """Switch between one shared multiplier and legacy four-field scaling."""
+
+        self._single_coefficient = bool(enabled)
+        self.single_controls.setVisible(self._single_coefficient)
+        self.legacy_controls.setVisible(not self._single_coefficient)
+        tooltip = (
+            "RAW × коэффициент" if self._single_coefficient
+            else "RAW × Vоп × коэффициент / (2^разрядность − 1) + Vбаз"
+        )
+        for scaled_output in self.scaled_outputs.values():
+            scaled_output.setToolTip(tooltip)
+        self._update_scaled_values()
 
     def apply_profile_configuration(self, config: dict[str, Any]) -> None:
         for name, control in self.profile_controls().items():
@@ -547,13 +724,22 @@ class SpecialAdcGroupResultWidget(ResultWidget):
         self._update_scaled_values()
 
     def _update_scaled_values(self) -> None:
-        coefficient = self.correction_coefficient.value()
+        if self._single_coefficient:
+            multiplier = self.correction_coefficient.value()
+            offset = 0.0
+        else:
+            full_scale = (1 << self.resolution_bits.value()) - 1
+            multiplier = (
+                self.reference_voltage.value() * self.scale_factor.value()
+                / full_scale
+            )
+            offset = self.base_voltage.value()
         for name, scaled_output in self.scaled_outputs.items():
             raw_value = self._raw_values[name]
             if raw_value is None:
                 scaled_output.setText("—")
                 continue
-            scaled_output.setText(f"{raw_value * coefficient:.9g}")
+            scaled_output.setText(f"{raw_value * multiplier + offset:.9g}")
 
 
 PARAM_WIDGETS: dict[str, type[ParameterWidget]] = {

@@ -25,7 +25,9 @@ class DeviceProfileStore:
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path is not None else default_config_path()
-        self.data: dict[str, Any] = {"version": CONFIG_VERSION, "devices": {}}
+        self.data: dict[str, Any] = {
+            "version": CONFIG_VERSION, "devices": {}, "settings": {}
+        }
         self.active_key: str | None = None
         self.dirty = False
         self._load()
@@ -74,6 +76,16 @@ class DeviceProfileStore:
         profile = self.data["devices"].get(self.active_key, {})
         value = profile.get(name, {}) if isinstance(profile, dict) else {}
         return deepcopy(value) if isinstance(value, dict) else {}
+
+    def settings(self) -> dict[str, Any]:
+        """Return device-independent UI settings shared by all profiles."""
+
+        value = self.data.get("settings", {})
+        return deepcopy(value) if isinstance(value, dict) else {}
+
+    def set_settings(self, value: dict[str, Any]) -> None:
+        self.data["settings"] = deepcopy(value)
+        self.dirty = True
 
     def set_section(self, name: str, value: dict[str, Any]) -> None:
         if self.active_key is None:

@@ -268,6 +268,17 @@ def application_stylesheet() -> str:
             color: {c["accent_text"]};
             min-width: 72px;
         }}
+
+        QMenu {{
+            color: #000000;
+            background-color: #FFFFFF;
+            border: 1px solid {c["border"]};
+        }}
+
+        QMenu::item:selected {{
+            background-color: #E5E7EB;
+            color: #000000;
+        }}
         
         QPushButton {{
             background-color: {c["accent"]};
