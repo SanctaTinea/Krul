@@ -332,3 +332,41 @@ def test_special_pwm_widget_sends_unified_command(qtbot) -> None:
     assert requests == [("PWM_SET", {
         "channel": "PWM_A", "duty_cycle": 60, "period_counter": 1000,
     })]
+
+
+def test_special_test_widget_shows_only_success_verdict(qtbot) -> None:
+    requests: list[tuple[str, dict[str, Any]]] = []
+
+    class FakeWindow:
+        def send_request(self, command, params, callback):
+            requests.append((command, params))
+            callback({"success": True, "result": {
+                "success": True, "summary": "ignored",
+            }})
+            return 1
+
+    descriptor = {
+        "cmd": "TEST_MEMORY", "title": "Memory", "description": "Connect J1.",
+        "result": [
+            {"name": "success", "type": "boolean"},
+            {"name": "summary", "type": "string"},
+        ],
+    }
+    gui.SpecialTestCommandWidget.validate_descriptors([descriptor])
+    widget = gui.SpecialTestCommandWidget(FakeWindow(), [descriptor])
+    panel = widget.create_widget(descriptor)
+    assert panel is not None
+    qtbot.addWidget(panel)
+
+    description = panel.findChild(gui.QLabel, "testDescription")
+    assert description is not None and description.text() == "Connect J1."
+    assert not panel.findChildren(gui.QLineEdit)
+    button = panel.findChild(gui.QPushButton, "testExecuteButton")
+    result = panel.findChild(gui.ResultBoolLabel, "testResult")
+    assert button.focusPolicy() == gui.Qt.NoFocus
+    assert result.sizePolicy().horizontalPolicy() == gui.QSizePolicy.Expanding
+    assert result.sizePolicy().verticalPolicy() == gui.QSizePolicy.Fixed
+    qtbot.mouseClick(button, gui.Qt.LeftButton)
+
+    assert requests == [("TEST_MEMORY", {})]
+    assert result.text() == "SUCCESS"

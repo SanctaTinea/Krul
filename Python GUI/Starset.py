@@ -67,6 +67,8 @@ from starset_theme import *
 from starset_transport import *
 from starset_widgets import *
 
+DISCOVERY_DESCRIBE_WINDOW = 4
+
 
 class MainWindow(QMainWindow):
     response_received = Signal(str, dict)
@@ -764,6 +766,7 @@ class MainWindow(QMainWindow):
             self._append_terminal("CMD_LIST вернул пустой список", "error")
             return
         waiting = set(names)
+        queued_names = iter(names)
 
         def described(response: dict[str, Any], expected: str) -> None:
             waiting.discard(expected)
@@ -773,13 +776,22 @@ class MainWindow(QMainWindow):
                     self.descriptors[str(descriptor["cmd"])] = descriptor
             if not waiting:
                 self._build_dynamic_tabs()
+                return
+            send_next()
 
-        for name in names:
+        def send_next() -> None:
+            try:
+                name = next(queued_names)
+            except StopIteration:
+                return
             self.send_request(
                 "DESCRIBE", {"name": name},
                 lambda response, expected=name: described(response, expected),
                 timeout=DISCOVERY_TIMEOUT_S,
             )
+
+        for _ in range(min(DISCOVERY_DESCRIBE_WINDOW, len(names))):
+            send_next()
 
     def _reset_tabs(self) -> None:
         while self.tabs.count():

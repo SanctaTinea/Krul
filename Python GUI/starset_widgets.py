@@ -191,7 +191,7 @@ class PinCard(QFrame):
                 lambda requested: self.set_requested.emit(
                     self.wire_value, requested)
             )
-            layout.addWidget(self.switch)
+            layout.insertWidget(0, self.switch)
         self.set_state(state)
 
     def set_state(self, state: int) -> None:
@@ -1133,6 +1133,18 @@ class IOPanel(QWidget):
         body.setObjectName("GPIO_outer")
         self.input_grid = ResponsivePinGrid()
         self.output_grid = ResponsivePinGrid()
+        self.output_categories: dict[str, tuple[QGroupBox, ResponsivePinGrid]] = {}
+        # Missing/empty/invalid metadata keeps the legacy flat output layout.
+        # Categories belong to the device; never infer board names in Starset.
+        def category_name(pin: dict[str, Any]) -> str:
+            value = pin.get("category")
+            return value.strip() if isinstance(value, str) else ""
+
+        categorized_outputs = any(
+            str(pin.get("direction", pin.get("type", "IN"))).upper() == "OUT"
+            and category_name(pin)
+            for pin in pins
+        )
 
         inputs = QGroupBox("Входы")
         inputs.setObjectName("gpioSection")
@@ -1155,7 +1167,26 @@ class IOPanel(QWidget):
 
         all_row.addStretch()
 
-        output_layout.addWidget(self.output_grid)
+        if categorized_outputs:
+            self.output_grid.setParent(outputs)
+            self.output_grid.hide()
+            categories = {
+                category_name(pin) or "Прочие"
+                for pin in pins
+                if str(pin.get("direction", pin.get("type", "IN"))).upper() == "OUT"
+                and pin.get("name")
+            }
+            for category in sorted(categories, key=str.casefold):
+                box = QGroupBox(category)
+                box.setObjectName("gpioCategory")
+                grid = ResponsivePinGrid()
+                layout = QVBoxLayout(box)
+                layout.setContentsMargins(0, IO_SECTION_TOP_MARGIN, 0, 0)
+                layout.addWidget(grid)
+                self.output_categories[category] = (box, grid)
+                output_layout.addWidget(box)
+        else:
+            output_layout.addWidget(self.output_grid)
         output_layout.addSpacing(IO_OUTPUT_ACTIONS_TOP_SPACING)
         output_layout.addLayout(all_row)
 
@@ -1208,12 +1239,23 @@ class IOPanel(QWidget):
             card.set_requested.connect(self._set_one)
             self.cards[name] = card
             self._cards_by_wire[wire_name] = card
-            (self.output_grid if pin_type == "OUT" else self.input_grid).add_card(card)
+            if pin_type == "OUT" and categorized_outputs:
+                _, grid = self.output_categories[category_name(pin) or "Прочие"]
+            else:
+                grid = self.output_grid if pin_type == "OUT" else self.input_grid
+            grid.add_card(card)
         self.filter_edit.textChanged.connect(self._filter)
 
     def _filter(self, text: str) -> None:
         self.input_grid.apply_filter(text)
         self.output_grid.apply_filter(text)
+        filter_text = text.casefold().strip()
+        for box, grid in self.output_categories.values():
+            grid.apply_filter(text)
+            box.setVisible(any(
+                not filter_text or filter_text in card.name.casefold()
+                for card in grid.cards
+            ))
 
     def _set_one(self, name: Any, state: int) -> None:
         card = self._cards_by_wire.get(name)
@@ -1868,9 +1910,92 @@ class SpecialPwmCommandWidget(CommandWidget):
         return
 
 
+class SpecialTestCommandWidget(CommandWidget):
+    """Compact test action with its boolean verdict."""
+
+    @classmethod
+    def validate_descriptors(
+            cls, descriptors: list[dict[str, Any]]) -> None:
+        super().validate_descriptors(descriptors)
+        for descriptor in descriptors:
+            if descriptor.get("params"):
+                raise WidgetCompatibilityError(
+                    "special_test не поддерживает параметры команды"
+                )
+            success = [
+                field for field in descriptor.get("result", [])
+                if field.get("name") == "success"
+            ]
+            if len(success) != 1 or success[0].get("type") != "boolean":
+                raise WidgetCompatibilityError(
+                    "special_test требует единственное boolean-поле success"
+                )
+
+    def hidden_command_names(self) -> set[str]:
+        return set()
+
+    def create_widget(self, descriptor: dict[str, Any]) -> QWidget | None:
+        host = QGroupBox()
+        host.setObjectName("commandForm")
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(3)
+
+        title = QLabel(str(descriptor.get("title") or descriptor["cmd"]))
+        title.setObjectName("commandTitle")
+        title_font = title.font()
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        description = descriptor.get("description")
+        if isinstance(description, str) and description:
+            description_label = QLabel(description)
+            description_label.setObjectName("testDescription")
+            description_label.setWordWrap(True)
+            layout.addWidget(description_label)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        execute_button = QPushButton("Выполнить")
+        execute_button.setObjectName("testExecuteButton")
+        execute_button.setFocusPolicy(Qt.NoFocus)
+        result = ResultBoolLabel()
+        result.setObjectName("testResult")
+        result.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.addWidget(execute_button)
+        row.addWidget(result, 1)
+        layout.addLayout(row)
+
+        def submit(_checked: bool = False) -> None:
+            set_button_pending(execute_button, True)
+            execute_button.setEnabled(False)
+
+            def finished(message: dict[str, Any]) -> None:
+                set_button_pending(execute_button, False)
+                execute_button.setEnabled(True)
+                if message.get("success"):
+                    result.setValue(bool(message.get("result", {}).get("success")))
+
+            transaction = self.window.send_request(
+                str(descriptor["cmd"]), {}, finished
+            )
+            if transaction is None:
+                set_button_pending(execute_button, False)
+                execute_button.setEnabled(True)
+
+        execute_button.clicked.connect(submit)
+        return host
+
+    def build(self) -> None:
+        return
+
+
 COMMAND_WIDGETS: dict[str, type[CommandWidget]] = {
     "special_gpio": SpecialGpioCommandWidget,
     "special_pwm": SpecialPwmCommandWidget,
+    "special_test": SpecialTestCommandWidget,
 }
 
 # Результаты этих типов рисуются схемой, без widget_hint.

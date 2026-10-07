@@ -55,6 +55,8 @@ static const char* widget_name(krul_widget_t widget) {
             return "special_dac";
         case KRUL_WIDGET_SPECIAL_PWM:
             return "special_pwm";
+        case KRUL_WIDGET_SPECIAL_TEST:
+            return "special_test";
         default:
             return NULL;
     }
