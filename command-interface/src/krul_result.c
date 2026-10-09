@@ -359,6 +359,101 @@ bool krul_result_end_object(krul_result_t* result) {
     return true;
 }
 
+/*
+ * Тегированное объединение кодируется как объект: поле-дискриминатор плюс поля
+ * выбранного варианта. Тег пишется напрямую (вне маски seen), после чего кадр
+ * становится обычным объектом с полями варианта.
+ */
+bool krul_result_begin_union(krul_result_t* result, const char* name) {
+    if (result == NULL || result->depth >= KRUL_MAX_RESULT_DEPTH) {
+        krul_result_fail(result, "Result nesting is too deep");
+        return false;
+    }
+    const krul_field_desc_t* field =
+        result_prepare(result, name, KRUL_TYPE_UNION);
+    if (field == NULL) return false;
+    serde_key_t key;
+    if (!serde_begin_object(result->writer, result_key(field, &key))) {
+        krul_result_fail(result, "Serializer rejected union '%s'",
+                         krul_field_name(field));
+        return false;
+    }
+    result_frame_t* frame = &result->frames[result->depth++];
+    *frame = (result_frame_t){.kind = RESULT_FRAME_OBJECT,
+                              .container_desc = field};
+    return true;
+}
+
+bool krul_result_union_tag(krul_result_t* result, int32_t tag) {
+    if (result == NULL || result->failed || result->depth == 0U) return false;
+    result_frame_t* frame = &result->frames[result->depth - 1U];
+    const krul_field_desc_t* union_field = frame->container_desc;
+    if (frame->kind != RESULT_FRAME_OBJECT || union_field == NULL ||
+        union_field->type != KRUL_TYPE_UNION || frame->union_tagged) {
+        krul_result_fail(result, "union tag used outside a fresh union");
+        return false;
+    }
+    const krul_field_desc_t* tag_field = union_field->schema.tagged_union.tag;
+    bool known = false;
+    for (uint16_t index = 0U;
+         index < tag_field->constraints.enumeration.count; ++index) {
+        if (tag_field->constraints.enumeration.values[index].value == tag) {
+            known = true;
+            break;
+        }
+    }
+    const krul_variant_desc_t* variant = NULL;
+    for (uint16_t index = 0U;
+         index < union_field->schema.tagged_union.variant_count; ++index) {
+        if (union_field->schema.tagged_union.variants[index].tag == tag) {
+            variant = &union_field->schema.tagged_union.variants[index];
+            break;
+        }
+    }
+    if (!known || variant == NULL) {
+        krul_result_fail(result, "Handler returned unknown union tag %ld",
+                         (long)tag);
+        return false;
+    }
+    serde_key_t key = krul_field_key(tag_field);
+    if (!serde_put_i32(result->writer, &key, tag)) {
+        krul_result_fail(result, "Serializer rejected union tag");
+        return false;
+    }
+    frame->union_tagged = true;
+    frame->fields = variant->fields;
+    frame->field_count = variant->field_count;
+    frame->seen = 0U;
+    return true;
+}
+
+bool krul_result_end_union(krul_result_t* result) {
+    if (result == NULL || result->failed || result->depth <= 1U) return false;
+    result_frame_t* frame = &result->frames[result->depth - 1U];
+    if (frame->kind != RESULT_FRAME_OBJECT || frame->container_desc == NULL ||
+        frame->container_desc->type != KRUL_TYPE_UNION ||
+        !frame->union_tagged) {
+        krul_result_fail(result, "Mismatched union end");
+        return false;
+    }
+    if (!krul_result_object_complete(frame)) {
+        krul_result_fail(result,
+                         "Handler omitted a required union variant field");
+        return false;
+    }
+    if (frame->container_desc != NULL &&
+        !validate_direct_result(
+            result, frame->container_desc,
+            (krul_value_ref_t){.value.count = frame->field_count}))
+        return false;
+    --result->depth;
+    if (!serde_end_object(result->writer)) {
+        krul_result_fail(result, "Serializer failed to end result union");
+        return false;
+    }
+    return true;
+}
+
 bool krul_result_ok(const krul_result_t* result) {
     return result != NULL && !result->failed && serde_writer_ok(result->writer);
 }

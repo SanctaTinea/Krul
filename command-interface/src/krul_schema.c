@@ -12,6 +12,28 @@
 #include <string.h>
 
 static bool descriptor_valid(const krul_field_desc_t* field, bool output,
+                             uint8_t depth);
+
+/* Поля варианта объединения: непустые, с заданными уникальными именами. */
+static bool variant_fields_valid(const krul_field_desc_t* fields,
+                                 uint16_t count, bool output, uint8_t depth) {
+    if (count == 0U || fields == NULL || count > KRUL_MAX_FIELDS_PER_OBJECT)
+        return false;
+    for (uint16_t outer = 0U; outer < count; ++outer) {
+        if (fields[outer].name == NULL ||
+            !descriptor_valid(&fields[outer], output, depth))
+            return false;
+        for (uint16_t inner = (uint16_t)(outer + 1U); inner < count; ++inner) {
+            if (strcmp(fields[outer].name, fields[inner].name) == 0 ||
+                krul_field_tag(&fields[outer]) ==
+                    krul_field_tag(&fields[inner]))
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool descriptor_valid(const krul_field_desc_t* field, bool output,
                              uint8_t depth) {
     /* Результат не может иметь default: обработчик обязан явно вернуть каждое поле. */
     if (field == NULL || depth >= KRUL_MAX_RESULT_DEPTH ||
@@ -91,6 +113,34 @@ static bool descriptor_valid(const krul_field_desc_t* field, bool output,
                 if (strcmp(left->name, right->name) == 0 ||
                     (left->tag != 0U && left->tag == right->tag))
                     return false;
+            }
+        }
+    } else if (field->type == KRUL_TYPE_UNION) {
+        /* Объединения допустимы только в результате (ввод их не разбирает). */
+        const krul_field_desc_t* tag = field->schema.tagged_union.tag;
+        if (!output || tag == NULL || tag->type != KRUL_TYPE_ENUM ||
+            !descriptor_valid(tag, output, (uint8_t)(depth + 1U)))
+            return false;
+        uint16_t variant_count = field->schema.tagged_union.variant_count;
+        const krul_variant_desc_t* variants =
+            field->schema.tagged_union.variants;
+        if (variant_count == 0U || variants == NULL) return false;
+        for (uint16_t index = 0U; index < variant_count; ++index) {
+            if (!variant_fields_valid(variants[index].fields,
+                                      variants[index].field_count, output,
+                                      (uint8_t)(depth + 1U)))
+                return false;
+            bool tag_declared = false;
+            for (uint16_t value = 0U;
+                 value < tag->constraints.enumeration.count; ++value) {
+                if (tag->constraints.enumeration.values[value].value ==
+                    variants[index].tag)
+                    tag_declared = true;
+            }
+            if (!tag_declared) return false;
+            for (uint16_t other = (uint16_t)(index + 1U);
+                 other < variant_count; ++other) {
+                if (variants[index].tag == variants[other].tag) return false;
             }
         }
     }

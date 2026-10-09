@@ -70,10 +70,7 @@ def test_adc_profile_restores_and_synchronizes_duplicate_forms(qtbot, tmp_path) 
     store.select_device(IDENTITY)
     store.set_section("widgets", {
         "ADC_PROFILE_TEST:value": {
-            "reference_voltage": 5.0,
-            "scale_factor": 2.0,
-            "base_voltage": -0.25,
-            "resolution_bits": 10,
+            "correction_coefficient": 2.5,
         }
     })
     window = gui.MainWindow(profile_store=store)
@@ -87,15 +84,13 @@ def test_adc_profile_restores_and_synchronizes_duplicate_forms(qtbot, tmp_path) 
         if form.command == "ADC_PROFILE_TEST"
     ]
     assert len(widgets) == 2
-    assert all(widget.reference_voltage.value() == pytest.approx(5.0)
-               for widget in widgets)
-    assert all(widget.scale_factor.value() == pytest.approx(2.0)
+    assert all(widget.correction_coefficient.value() == pytest.approx(2.5)
                for widget in widgets)
 
-    widgets[0].scale_factor.setValue(3.5)
-    assert widgets[1].scale_factor.value() == pytest.approx(3.5)
+    widgets[0].correction_coefficient.setValue(3.5)
+    assert widgets[1].correction_coefficient.value() == pytest.approx(3.5)
     saved = store.section("widgets")["ADC_PROFILE_TEST:value"]
-    assert saved["scale_factor"] == pytest.approx(3.5)
+    assert saved["correction_coefficient"] == pytest.approx(3.5)
 
 
 def test_graph_profile_restores_and_updates_store(qtbot, tmp_path) -> None:
@@ -130,3 +125,39 @@ def test_graph_profile_restores_and_updates_store(qtbot, tmp_path) -> None:
     multiplier, _base = graph._transform_widgets[key]
     multiplier.setValue(4.0)
     assert store.section("graphs")["transforms"][key]["multiplier"] == 4.0
+
+
+def test_adc_single_coefficient_setting_persists_and_applies(qtbot, tmp_path) -> None:
+    path = tmp_path / "profiles.json"
+    store = DeviceProfileStore(path)
+    window = gui.MainWindow(profile_store=store)
+    qtbot.addWidget(window)
+
+    assert window.adc_single_coefficient_action.isChecked()
+    assert "Использовать один коэффициент для АЦП" in (
+        window.adc_single_coefficient_action.text()
+    )
+    assert not window.adc_mode_button.icon().isNull()
+
+    window.descriptors = {"ADC_PROFILE_TEST": adc_descriptor()}
+    window._build_dynamic_tabs()
+    widgets = [
+        form.result_widgets["value"]
+        for form in window.forms
+        if form.command == "ADC_PROFILE_TEST"
+    ]
+    assert widgets
+    assert all(not widget.single_controls.isHidden() for widget in widgets)
+    assert all(widget.legacy_controls.isHidden() for widget in widgets)
+
+    window.adc_single_coefficient_action.setChecked(False)
+    assert all(widget.single_controls.isHidden() for widget in widgets)
+    assert all(not widget.legacy_controls.isHidden() for widget in widgets)
+
+    store.flush()
+    reloaded = DeviceProfileStore(path)
+    assert reloaded.settings()["adc_single_coefficient"] is False
+
+    restored = gui.MainWindow(profile_store=reloaded)
+    qtbot.addWidget(restored)
+    assert not restored.adc_single_coefficient_action.isChecked()

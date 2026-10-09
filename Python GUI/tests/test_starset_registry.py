@@ -87,6 +87,135 @@ def test_rejected_descriptor_uses_default_result_widget(qtbot) -> None:
     assert warnings and "special_adc поддерживает только" in warnings[0]
 
 
+def _label_texts(widget: Any) -> list[str]:
+    return [label.text() for label in widget.findChildren(gui.QLabel)]
+
+
+def _telemetry_node_union() -> dict[str, Any]:
+    return {
+        "type": "union",
+        "tag": {
+            "name": "kind",
+            "type": "enum",
+            "constraints": {"values": [
+                {"value": 0, "title": "Телеметрия"},
+                {"value": 1, "title": "Событие"},
+            ]},
+        },
+        "variants": [
+            {"value": 0, "fields": [
+                {"name": "time", "label": "Время", "type": "unsigned"},
+            ]},
+            {"value": 1, "fields": [
+                {"name": "event", "label": "Тип события", "type": "enum",
+                 "constraints": {"values": [
+                     {"value": 0, "title": "Начало цикла"},
+                     {"value": 1, "title": "Конец цикла"},
+                 ]}},
+                {"name": "cyc_idx", "label": "Номер цикла",
+                 "type": "unsigned"},
+            ]},
+        ],
+    }
+
+
+def test_union_result_renders_tag_and_selected_variant(qtbot) -> None:
+    form = gui.CommandForm(
+        {
+            "cmd": "READ_TELEMETRY",
+            "result": [{
+                "name": "node",
+                "label": "Узел",
+                "type": "union",
+                "tag": {
+                    "name": "kind",
+                    "type": "enum",
+                    "constraints": {"values": [
+                        {"value": 0, "title": "Телеметрия"},
+                        {"value": 1, "title": "Событие"},
+                    ]},
+                },
+                "variants": [
+                    {"value": 0, "fields": [
+                        {"name": "time", "label": "Время",
+                         "type": "unsigned"},
+                    ]},
+                    {"value": 1, "fields": [
+                        {"name": "event", "label": "Тип события",
+                         "type": "enum", "constraints": {"values": [
+                             {"value": 0, "title": "Начало цикла"},
+                             {"value": 1, "title": "Конец цикла"},
+                         ]}},
+                        {"name": "cyc_idx", "label": "Номер цикла",
+                         "type": "unsigned"},
+                    ]},
+                ],
+            }],
+        },
+        lambda *_args: None,
+    )
+    qtbot.addWidget(form)
+
+    widget = form.result_widgets["node"]
+    assert isinstance(widget, gui.ResultStructuredWidget)
+
+    form.handle_response({
+        "success": True,
+        "result": {"node": {"kind": 1, "event": 1, "cyc_idx": 7}},
+    })
+    texts = _label_texts(widget)
+    assert "Событие" in texts          # tag title for value 1
+    assert "Тип события" in texts      # variant field label
+    assert "Конец цикла" in texts      # nested enum title
+    assert "Номер цикла" in texts
+    assert "7" in texts
+    assert "Время" not in texts        # variant 0 field must be hidden
+
+    form.handle_response({
+        "success": True,
+        "result": {"node": {"kind": 0, "time": 12345}},
+    })
+    texts = _label_texts(widget)
+    assert "Телеметрия" in texts
+    assert "Время" in texts
+    assert "12345" in texts
+    assert "Тип события" not in texts  # variant 1 field must be hidden
+
+
+def test_array_of_union_result_renders_each_node(qtbot) -> None:
+    form = gui.CommandForm(
+        {
+            "cmd": "READ_TELEMETRY",
+            "result": [{
+                "name": "nodes",
+                "label": "Узлы",
+                "type": "array",
+                "items": _telemetry_node_union(),
+            }],
+        },
+        lambda *_args: None,
+    )
+    qtbot.addWidget(form)
+
+    widget = form.result_widgets["nodes"]
+    assert isinstance(widget, gui.ResultStructuredWidget)
+
+    form.handle_response({
+        "success": True,
+        "result": {"nodes": [
+            {"kind": 0, "time": 100},
+            {"kind": 1, "event": 0, "cyc_idx": 42},
+        ]},
+    })
+    texts = _label_texts(widget)
+    assert "#1" in texts and "#2" in texts
+    assert "Телеметрия" in texts and "Событие" in texts
+    assert "Время" in texts
+    assert "100" in texts
+    assert "42" in texts
+    assert "Начало цикла" in texts
+
+
 def test_command_registry_receives_every_command_for_the_hint(
         qtbot, monkeypatch) -> None:
     class DemoCommandWidget(gui.CommandWidget):
@@ -142,15 +271,16 @@ def test_special_dac_parameter_uses_synchronized_slider(qtbot) -> None:
     assert form.parameters() == {"value": 2048}
 
 
-def test_boolean_result_uses_success_and_fail_labels(qtbot) -> None:
+def test_boolean_result_uses_checkbox(qtbot) -> None:
     label = gui.ResultBoolLabel()
     qtbot.addWidget(label)
+    assert isinstance(label, gui.QCheckBox)
     label.setValue(True)
-    assert label.text() == "SUCCESS"
-    assert "margin-right: 10px" in label.styleSheet()
+    assert label.checkState() == gui.Qt.Checked
     label.setValue(False)
-    assert label.text() == "FAIL"
-    assert "margin-right: 10px" in label.styleSheet()
+    assert label.checkState() == gui.Qt.Unchecked
+    label.setValue(None)
+    assert label.checkState() == gui.Qt.PartiallyChecked
 
 
 def test_special_pwm_widget_sends_unified_command(qtbot) -> None:
