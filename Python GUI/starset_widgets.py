@@ -746,7 +746,46 @@ PARAM_WIDGETS: dict[str, type[ParameterWidget]] = {
     "special_dac": SpecialDacParameterWidget,
 }
 
+class TemperatureListResultWidget(ResultWidget):
+    """Descriptor-driven sensor ID and Celsius rows."""
+
+    @classmethod
+    def validate_descriptor(cls, field: dict[str, Any]) -> None:
+        super().validate_descriptor(field)
+        element = field.get("items", {})
+        fields = {item.get("name"): item.get("type")
+                  for item in element.get("fields", [])}
+        if (field.get("type") != "array" or element.get("type") != "object"
+                or fields.get("id") != "string" or fields.get("temperature") != "float"):
+            raise WidgetCompatibilityError("Expected sensor objects with id and temperature")
+
+    def __init__(self, field: dict[str, Any]) -> None:
+        super().__init__(field)
+        self.rows = QVBoxLayout(self)
+        self.rows.setContentsMargins(0, 0, 0, 0)
+        self.rows.addWidget(QLabel("—"))
+
+    def setValue(self, value: Any) -> None:
+        _clear_result_layout(self.rows)
+        if not value:
+            self.rows.addWidget(QLabel("Датчики не найдены"))
+            return
+        for item in value:
+            row = QWidget()
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            sensor_id = QLabel(str(item["id"]))
+            sensor_id.setTextFormat(Qt.PlainText)
+            sensor_id.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            temperature = QLabel(f'{item["temperature"]:.3f} °C')
+            temperature.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            layout.addWidget(sensor_id, 1)
+            layout.addWidget(temperature)
+            self.rows.addWidget(row)
+
+
 RESULT_WIDGETS: dict[str, type[ResultWidget]] = {
+    "special_temperature_list": TemperatureListResultWidget,
     "special_adc": SpecialAdcResultWidget,
     "special_adc_group": SpecialAdcGroupResultWidget,
 }

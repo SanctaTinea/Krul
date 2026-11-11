@@ -1,6 +1,7 @@
-# Build trees and generated CMake/Ninja files
+# Build directories (at any depth); keep source, generated sources and docs.
 build/
 build-*/
+build_*/
 cmake-build-*/
 out/
 Debug/
@@ -16,52 +17,67 @@ DartConfiguration.tcl
 Testing/
 compile_commands.json
 build.ninja
+rules.ninja
 .ninja_deps
 .ninja_log
+CMakeUserPresets.json
 
-# Compilers, linkers and native binaries
-*.a
-*.axf
-*.bin
-*.d
-*.dep
-*.dll
-*.elf
-*.exe
-*.hex
-*.lib
-*.list
-*.lst
-*.map
+# Object files, link outputs and coverage results.
 *.o
 *.obj
-*.pdb
+*.a
+*.lib
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+*.elf
+*.axf
+*.hex
+*.bin
 *.srec
-*.su
 *.uf2
+*.map
+*.lst
+*.list
+*.d
+*.dep
+*.dfo
+*.su
+*.pdb
+*.ilk
+*.idb
+*.exp
 *.gcda
 *.gcno
+*.gcov
+*.profraw
+*.profdata
 
-# Python environments, caches and packaging output
+# Python environments, caches and package output.
 .venv/
 venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
+.pytest-temp*/
 .mypy_cache/
 .ruff_cache/
 .tox/
 .coverage
+.coverage.*
 htmlcov/
-dist/
 *.egg-info/
-*.py[cod]
+dist/
 
-# IDEs, analyzers and operating systems
+# Local IDE state. Shared tasks, launch settings and CubeMX files stay visible.
 .metadata/
 .vs/
 .idea/
 .PVS-Studio/
 .cache/
+.clangd/
 .vscode/.browse.VC.db*
 .vscode/ipch/
 *.code-workspace
@@ -69,7 +85,7 @@ dist/
 Thumbs.db
 Desktop.ini
 
-# Logs, editor backups and temporary files
+# Temporary files and editor backups.
 *.log
 *.tmp
 *.temp
@@ -79,9 +95,3 @@ Desktop.ini
 *.swo
 *~
 ~$*
-
-# Local hardware datasheets; keep maintained documentation in docs/ tracked.
-[Dd]atasheet/
-[Dd]atasheets/
-*[Dd][Aa][Tt][Aa][Ss][Hh][Ee][Ee][Tt]*.pdf
-1Mb_16Mb_Serial_HP_MRAM.pdf

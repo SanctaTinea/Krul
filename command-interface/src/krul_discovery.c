@@ -57,6 +57,8 @@ static const char* widget_name(krul_widget_t widget) {
             return "special_pwm";
         case KRUL_WIDGET_SPECIAL_TEST:
             return "special_test";
+        case KRUL_WIDGET_SPECIAL_TEMPERATURE_LIST:
+            return "special_temperature_list";
         default:
             return NULL;
     }

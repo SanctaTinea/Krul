@@ -70,6 +70,7 @@ typedef enum {
     KRUL_WIDGET_SPECIAL_DAC,
     KRUL_WIDGET_SPECIAL_PWM,
     KRUL_WIDGET_SPECIAL_TEST,
+    KRUL_WIDGET_SPECIAL_TEMPERATURE_LIST,
 } krul_widget_t;
 
 /** Определяет назначение команды и её видимость в клиентском GUI. */
